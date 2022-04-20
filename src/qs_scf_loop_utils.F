@@ -53,7 +53,8 @@ MODULE qs_scf_loop_utils
                                               do_roks_diag,&
                                               do_scf_diag_subspace,&
                                               do_special_diag
-   USE qs_scf_methods,                  ONLY: scf_env_density_mixing
+   USE qs_scf_methods,                  ONLY: scf_env_density_mixing, &
+                                              scf_env_density_mixing_pol
    USE qs_scf_output,                   ONLY: qs_scf_print_summary
    USE qs_scf_types,                    ONLY: block_davidson_diag_method_nr,&
                                               block_krylov_diag_method_nr,&
@@ -65,6 +66,7 @@ MODULE qs_scf_loop_utils
                                               special_diag_method_nr
    USE scf_control_types,               ONLY: scf_control_type,&
                                               smear_type
+   USE physcon,                         ONLY: evolt
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -447,23 +449,42 @@ CONTAINS
 !> \param para_env  Parallel environment
 !> \param diis_step Did we do a DIIS step?
 ! **************************************************************************************************
-   SUBROUTINE qs_scf_density_mixing(scf_env, rho, para_env, diis_step)
+   SUBROUTINE qs_scf_density_mixing(scf_env, rho, para_env, diis_step, dft_control)
       TYPE(qs_scf_env_type), POINTER                     :: scf_env
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(cp_para_env_type), POINTER                    :: para_env
+      TYPE(dft_control_type), POINTER                    :: dft_control
       LOGICAL                                            :: diis_step
 
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: rho_ao_kp
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER       :: rho_pol
 
       NULLIFY (rho_ao_kp)
 
       CALL qs_rho_get(rho, rho_ao_kp=rho_ao_kp)
+
+      IF (dft_control%do_sic_fp) THEN
+            IF (scf_env%mixing_method .NE. direct_mixing_nr .OR. &
+                 scf_env%mixing_method .NE. no_mixing_nr ) THEN
+!                  CPABORT('SIC FP compatible with DIRECT P MIXING only')
+            END IF
+      END IF
 
       SELECT CASE (scf_env%mixing_method)
       CASE (direct_mixing_nr)
          CALL scf_env_density_mixing(scf_env%p_mix_new, &
                                      scf_env%mixing_store, rho_ao_kp, para_env, scf_env%iter_delta, scf_env%iter_count, &
                                      diis=diis_step)
+         IF (dft_control%do_sic_fp) THEN
+            CALL qs_rho_get(rho, rho_pol=rho_pol)
+            CALL scf_env_density_mixing_pol(scf_env%p_mix_new_pol, &
+                                            scf_env%mixing_store, &
+                                            rho_pol, &
+                                            para_env, &
+                                            scf_env%iter_delta, &
+                                            scf_env%iter_count, &
+                                            diis=diis_step)
+         END IF
       CASE (gspace_mixing_nr, pulay_mixing_nr, broyden_mixing_nr, &
             broyden_mixing_new_nr, multisecant_mixing_nr)
          ! Compute the difference p_out-p_in
@@ -508,10 +529,13 @@ CONTAINS
          outer_loop_eps = SQRT(MAXVAL(scf_env%outer_scf%gradient(:, scf_env%outer_scf%iter_count)**2))
 
          IF (outer_loop_eps < scf_control%outer_scf%eps_scf) outer_loop_converged = .TRUE.
+            
       END IF
+
 
       exit_outer_loop = should_stop .OR. outer_loop_converged .OR. &
                         scf_env%outer_scf%iter_count > scf_control%outer_scf%max_scf
+
 
    END SUBROUTINE qs_scf_check_outer_exit
 
@@ -534,15 +558,24 @@ CONTAINS
                                                             inner_loop_converged
       INTEGER                                            :: output_unit
 
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(qs_energy_type), POINTER                      :: energy
+
       inner_loop_converged = .FALSE.
       exit_inner_loop = .FALSE.
 
       CALL external_control(should_stop, "SCF", target_time=qs_env%target_time, &
                             start_time=qs_env%start_time)
+      CALL get_qs_env(qs_env=qs_env, dft_control=dft_control, energy=energy) ! Giorgio
       IF (scf_env%iter_delta < scf_control%eps_scf) THEN
          IF (output_unit > 0) THEN
             WRITE (UNIT=output_unit, FMT="(/,T3,A,I5,A/)") &
                "*** SCF run converged in ", scf_env%iter_count, " steps ***"
+            IF (dft_control%do_sic_fp) THEN ! Giorgio
+                   WRITE (UNIT=output_unit, FMT="(/,T3,A,F8.3,A/)") &
+                   "*** Polaron energy ", energy%pol_ehartree*evolt, " eV", &
+                   " @ gamma ", dft_control%sic_gamma, " ***"
+            END IF
          END IF
          inner_loop_converged = .TRUE.
          exit_inner_loop = .TRUE.
@@ -552,7 +585,21 @@ CONTAINS
          IF (output_unit > 0) THEN
             WRITE (UNIT=output_unit, FMT="(/,T3,A,I5,A/)") &
                "Leaving inner SCF loop after reaching ", scf_env%iter_count, " steps."
+            IF (dft_control%do_sic_fp) THEN ! Giorgio
+                   WRITE (UNIT=output_unit, FMT="(/,T3,A,F8.3,A/)") &
+                   "*** Polaron energy ", energy%pol_ehartree*evolt, " eV", &
+                   " @ gamma ", dft_control%sic_gamma, " ***"
+            END IF
          END IF
+!      ELSE IF (energy%pol_ehartree*evolt > 0.01) THEN   ! Giorgio
+!            IF (scf_env%method .NE. ot_method_nr) THEN
+!                  IF (output_unit > 0) THEN
+!                        WRITE(output_unit,*) 'Switching to OT...'
+!                  END IF
+!                  exit_inner_loop = .TRUE.
+!                  scf_env%switch_to_ot = .TRUE.
+!                 ! scf_env%method=ot_method_nr
+!            END IF
       END IF
 
    END SUBROUTINE qs_scf_check_inner_exit
@@ -621,7 +668,7 @@ CONTAINS
       LOGICAL, INTENT(IN)                                :: mix_rho
 
       TYPE(cp_para_env_type), POINTER                    :: para_env
-
+      
       NULLIFY (para_env)
       CALL get_qs_env(qs_env, para_env=para_env)
       ! ** update qs_env%rho

@@ -43,7 +43,7 @@ MODULE cp_control_utils
         real_time_propagation, sccs_andreussi, sccs_derivative_cd3, sccs_derivative_cd5, &
         sccs_derivative_cd7, sccs_derivative_fft, sccs_fattebert_gygi, sic_ad, sic_eo, &
         sic_list_all, sic_list_unpaired, sic_mauri_spz, sic_mauri_us, sic_none, slater, &
-        tddfpt_excitations, use_mom_ref_user, xas_dip_len
+        tddfpt_excitations, use_mom_ref_user, xas_dip_len, sic_eo, sic_fp
    USE input_cp2k_check,                ONLY: xc_functionals_expand
    USE input_cp2k_dft,                  ONLY: create_dft_section
    USE input_enumeration_types,         ONLY: enum_i2c,&
@@ -351,8 +351,12 @@ CONTAINS
                                 c_val=basis_set_file_name)
       CALL section_vals_val_get(dft_section, "POTENTIAL_FILE_NAME", &
                                 c_val=potential_file_name)
+      CALL section_vals_val_get(dft_section, "DIIS_SKIP", &
+                                l_val=dft_control%sic_skip_diis) ! Giorgio
+
 
       ! Read the input section
+      dft_control%do_sic_fp = .FALSE.
       tmp_section => section_vals_get_subs_vals(dft_section, "sic")
       CALL section_vals_val_get(tmp_section, "SIC_METHOD", &
                                 i_val=dft_control%sic_method_id)
@@ -362,6 +366,19 @@ CONTAINS
                                 r_val=dft_control%sic_scaling_a)
       CALL section_vals_val_get(tmp_section, "SIC_SCALING_B", &
                                 r_val=dft_control%sic_scaling_b)
+      CALL section_vals_val_get(tmp_section,"GAMMA",&
+                                r_val=dft_control%sic_gamma)
+      IF (dft_control%sic_method_id == sic_fp) THEN
+            dft_control%do_sic_fp = .TRUE.
+            CALL section_vals_val_get(tmp_section,"DIIS_SKIP",&
+                                 l_val=dft_control%sic_skip_diis)
+      END IF
+      
+      ! Set restricted to true if using sic explicit orbitals method
+      ! Giorgio
+      IF (dft_control%sic_method_id == sic_eo) THEN
+           dft_control%restricted = .TRUE.
+      ENDIF
 
       ! Determine if this is a TDDFPT run
       CALL section_vals_val_get(dft_section, "EXCITATIONS", i_val=excitations)

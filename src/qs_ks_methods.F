@@ -70,7 +70,8 @@ MODULE qs_ks_methods
                                               hfx_ks_matrix
    USE input_constants,                 ONLY: do_ppl_grid,&
                                               outer_scf_becke_constraint,&
-                                              outer_scf_hirshfeld_constraint
+                                              outer_scf_hirshfeld_constraint, &
+                                              sic_eo, sic_fp
    USE input_section_types,             ONLY: section_vals_get,&
                                               section_vals_get_subs_vals,&
                                               section_vals_type,&
@@ -132,7 +133,7 @@ MODULE qs_ks_methods
    USE qs_ks_utils,                     ONLY: &
         calc_v_sic_rspace, calculate_zmp_potential, compute_matrix_vxc, &
         get_embed_potential_energy, low_spin_roks, print_densities, print_detailed_energy, &
-        sic_explicit_orbitals, sum_up_and_integrate
+        sic_explicit_orbitals, sum_up_and_integrate, sic_fp_calc_xc_correction
    USE qs_local_rho_types,              ONLY: local_rho_type
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               mo_set_p_type,&
@@ -150,6 +151,7 @@ MODULE qs_ks_methods
    USE surface_dipole,                  ONLY: calc_dipsurf_potential
    USE virial_types,                    ONLY: virial_type
    USE xtb_matrices,                    ONLY: build_xtb_ks_matrix
+   USE physcon,                         ONLY: evolt
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -608,12 +610,20 @@ CONTAINS
          CALL qs_vxc_create(ks_env=ks_env, rho_struct=rho_struct, xc_section=xc_section, &
                             vxc_rho=v_rspace_new, vxc_tau=v_tau_rspace, exc=energy%exc, &
                             edisp=edisp, dispersion_env=qs_env%dispersion_env, &
-                            just_energy=just_energy_xc)
+                            just_energy=just_energy_xc, qs_env=qs_env)
+
          IF (edisp /= 0.0_dp) energy%dispersion = edisp
          IF (qs_env%requires_matrix_vxc .AND. ASSOCIATED(v_rspace_new)) THEN
             CALL compute_matrix_vxc(qs_env=qs_env, v_rspace=v_rspace_new, matrix_vxc=matrix_vxc)
             CALL set_ks_env(ks_env, matrix_vxc=matrix_vxc)
          ENDIF
+ !     ! SIC FP
+ !      IF (dft_control%do_sic_fp .AND. dft_control%charge .NE. 0) THEN
+ !        IF (ASSOCIATED(v_rspace_new)) THEN
+ !          CALL sic_fp_calc_xc_correction(energy, qs_env, dft_control,v_rspace_new,  poisson_env, just_energy, &
+ !                                     calculate_forces, auxbas_pw_pool) ! Giorgio
+ !        END IF
+ !      END IF
 
          IF (gapw .OR. gapw_xc) THEN
             CALL calculate_vxc_atom(qs_env, just_energy_xc, energy%exc1, xc_section_external=xc_section)
@@ -840,8 +850,10 @@ CONTAINS
                          calculate_forces, auxbas_pw_pool)
 
       ! deal with sic on explicit orbitals
-      CALL sic_explicit_orbitals(energy, qs_env, dft_control, poisson_env, just_energy, &
-                                 calculate_forces, auxbas_pw_pool)
+      IF (dft_control%sic_method_id .EQ. sic_eo) THEN
+            CALL sic_explicit_orbitals(energy, qs_env, dft_control, poisson_env, just_energy, &
+                                      calculate_forces, auxbas_pw_pool)
+      END IF
 
       ! Periodic external field
       CALL qs_efield_berry_phase(qs_env, just_energy, calculate_forces)
@@ -886,8 +898,10 @@ CONTAINS
 
       IF (dft_control%apply_embed_pot) energy%total = energy%total + energy%embed_corr
 
-      IF (abnormal_value(energy%total)) &
+      IF (abnormal_value(energy%total)) THEN
+         WRITE(*,*) 'qs_ks_build_kohn_sham_matrix: abnormal_value(energy%ex): ', abnormal_value(energy%ex)
          CPABORT("KS energy is an abnormal value (NaN/Inf).")
+      END IF
 
       ! Print detailed energy
       IF (my_print) THEN

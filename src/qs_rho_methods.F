@@ -107,7 +107,7 @@ CONTAINS
       LOGICAL                                            :: do_kpoints, my_admm, my_rebuild_ao, &
                                                             my_rebuild_grids
       REAL(KIND=dp), DIMENSION(:), POINTER               :: tot_rho_r
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, rho_pol
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_s_kp, rho_ao_kp
       TYPE(dbcsr_type), POINTER                          :: refmatrix, tmatrix
       TYPE(dft_control_type), POINTER                    :: dft_control
@@ -116,7 +116,7 @@ CONTAINS
          POINTER                                         :: sab_orb
       TYPE(pw_env_type), POINTER                         :: pw_env
       TYPE(pw_p_type), DIMENSION(:), POINTER             :: drho_g, drho_r, rho_g, rho_r, tau_g, &
-                                                            tau_r
+                                                            tau_r, pol_r, pol_g
       TYPE(pw_p_type), POINTER                           :: rho_r_sccs
       TYPE(pw_pool_type), POINTER                        :: auxbas_pw_pool
 
@@ -124,7 +124,7 @@ CONTAINS
 
       NULLIFY (pw_env, auxbas_pw_pool, matrix_s, matrix_s_kp, dft_control)
       NULLIFY (tot_rho_r, rho_ao_kp, rho_r, rho_g, drho_r, drho_g, tau_r, tau_g)
-      NULLIFY (rho_r_sccs)
+      NULLIFY (rho_r_sccs, pol_r, pol_g, rho_pol)
       NULLIFY (sab_orb)
       my_rebuild_ao = .TRUE.
       my_rebuild_grids = .TRUE.
@@ -159,6 +159,7 @@ CONTAINS
       CALL qs_rho_get(rho, &
                       tot_rho_r=tot_rho_r, &
                       rho_ao_kp=rho_ao_kp, &
+                      rho_pol=rho_pol, &
                       rho_r=rho_r, &
                       rho_g=rho_g, &
                       drho_r=drho_r, &
@@ -201,6 +202,34 @@ CONTAINS
          END DO
       END IF
 
+      ! rho_pol
+!      IF (dft_control%do_sic_fp) THEN
+            IF (my_rebuild_ao .OR. (.NOT. ASSOCIATED(rho_pol))) THEN
+               IF (ASSOCIATED(rho_pol)) &
+                  CALL dbcsr_deallocate_matrix_set(rho_pol)
+               ! Create a new density matrix set
+               CALL dbcsr_allocate_matrix_set(rho_pol, nspins)
+               CALL qs_rho_set(rho, rho_pol=rho_pol)
+               DO i = 1, nspins
+                  IF (nspins > 1) THEN
+                     IF (i == 1) THEN
+                        headline = "DENSITY MATRIX FOR ALPHA SPIN"
+                     ELSE
+                        headline = "DENSITY MATRIX FOR BETA SPIN"
+                     END IF
+                  ELSE
+                     headline = "DENSITY MATRIX"
+                  END IF
+                  ALLOCATE (rho_pol(i)%matrix)
+                  tmatrix => rho_pol(i)%matrix
+                  CALL dbcsr_create(matrix=tmatrix, template=refmatrix, name=TRIM(headline), &
+                                    matrix_type=dbcsr_type_symmetric, nze=0)
+                  CALL cp_dbcsr_alloc_block_from_nbl(tmatrix, sab_orb)
+                  CALL dbcsr_set(tmatrix, 0.0_dp)
+               END DO
+            END IF
+!      END IF
+
       ! rho_r
       IF (my_rebuild_grids .OR. .NOT. ASSOCIATED(rho_r)) THEN
          IF (ASSOCIATED(rho_r)) THEN
@@ -232,6 +261,42 @@ CONTAINS
                                    use_data=COMPLEXDATA1D, in_space=RECIPROCALSPACE)
          END DO
       END IF
+
+      ! sic_fp pol_r
+!      if (dft_control%do_sic_fp) THEN
+            IF (my_rebuild_grids .OR. .NOT. ASSOCIATED(pol_r)) THEN
+               IF (ASSOCIATED(pol_r)) THEN
+                  DO i = 1, SIZE(pol_r)
+                     CALL pw_release(pol_r(i)%pw)
+                  END DO
+                  DEALLOCATE (pol_r)
+               END IF
+               ALLOCATE (pol_r(nspins))
+               CALL qs_rho_set(rho, pol_r=pol_r)
+               DO i = 1, nspins
+                  CALL pw_pool_create_pw(auxbas_pw_pool, pol_r(i)%pw, &
+                                         use_data=REALDATA3D, in_space=REALSPACE)
+               END DO
+            END IF
+!      END IF
+
+      ! sic_fp pol_g
+!      if (dft_control%do_sic_fp) THEN
+            IF (my_rebuild_grids .OR. .NOT. ASSOCIATED(pol_g)) THEN
+               IF (ASSOCIATED(pol_g)) THEN
+                  DO i = 1, SIZE(pol_g)
+                     CALL pw_release(pol_g(i)%pw)
+                  END DO
+                  DEALLOCATE (pol_g)
+               END IF
+               ALLOCATE (pol_g(nspins))
+               CALL qs_rho_set(rho, pol_g=pol_g)
+               DO i = 1, nspins
+                  CALL pw_pool_create_pw(auxbas_pw_pool, pol_g(i)%pw, &
+                                   use_data=COMPLEXDATA1D, in_space=RECIPROCALSPACE)
+               END DO
+            END IF
+!      END IF
 
       ! SCCS
       IF (dft_control%do_sccs) THEN

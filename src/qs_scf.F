@@ -111,7 +111,8 @@ MODULE qs_scf
                                               restart_inverse_jacobian
    USE qs_cdft_types,                   ONLY: cdft_control_type
    USE qs_charges_types,                ONLY: qs_charges_type
-   USE qs_density_mixing_types,         ONLY: gspace_mixing_nr
+   USE qs_density_mixing_types,         ONLY: gspace_mixing_nr, &
+                                              direct_mixing_nr
    USE qs_diis,                         ONLY: qs_diis_b_clear,&
                                               qs_diis_b_create
    USE qs_energy_types,                 ONLY: qs_energy_type
@@ -167,6 +168,8 @@ MODULE qs_scf
    USE qs_wf_history_methods,           ONLY: wfi_purge_history,&
                                               wfi_update
    USE scf_control_types,               ONLY: scf_control_type
+   USE qs_ks_utils,                     ONLY: sic_fp_get_pol_density, sic_fp_compute_pol_ehartree
+   USE physcon,                         ONLY: evolt
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -325,13 +328,14 @@ CONTAINS
          output_unit, scf_energy_message_tag, total_steps
       LOGICAL :: diis_step, do_kpoints, energy_only, exit_inner_loop, exit_outer_loop, &
          inner_loop_converged, just_energy, outer_loop_converged
-      REAL(KIND=dp)                                      :: t1, t2
+      REAL(KIND=dp)                                      :: t1, t2,energy_store_tmp
       REAL(KIND=dp), DIMENSION(3)                        :: res_val_3
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(cp_para_env_type), POINTER                    :: para_env
       TYPE(cp_result_type), POINTER                      :: results
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: rho_ao_kp
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho_pol
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos, mos_last_converged
@@ -427,9 +431,11 @@ CONTAINS
       iter_count = 0
       total_steps = 0
       energy%tot_old = 0.0_dp
+      energy_store_tmp=0.0_dp
 
       scf_outer_loop: DO
 
+               IF (output_unit > 0) WRITE (*,*) '********************************* OUTER SCF: ', scf_env%outer_scf%iter_count ! Giorgio
          CALL init_scf_loop(scf_env=scf_env, qs_env=qs_env, &
                             scf_section=scf_section)
 
@@ -454,11 +460,13 @@ CONTAINS
             iter_count = iter_count + 1
             CALL cp_iterate(logger%iter_info, last=.FALSE., iter_nr=iter_count)
 
+!            IF (output_unit > 0) WRITE (*,*) 'inner scf iteration: ', iter_count ! Giorgio
             IF (output_unit > 0) CALL m_flush(output_unit)
 
             total_steps = total_steps + 1
             just_energy = energy_only
 
+            ! Extract polaron density for SIC FP
             CALL qs_ks_update_qs_env(qs_env, just_energy=just_energy, &
                                      calculate_forces=.FALSE.)
 
@@ -472,11 +480,18 @@ CONTAINS
                ! Gamma points only
                CALL qs_scf_new_mos(qs_env, scf_env, scf_control, scf_section, diis_step, energy_only)
             END IF
-
+            
             ! Print requested MO information (can be computationally expensive with OT)
             CALL qs_scf_write_mos(qs_env, scf_env, final_mos=.FALSE.)
 
-            CALL qs_scf_density_mixing(scf_env, rho, para_env, diis_step)
+            ! Extract polaron density for SIC FP
+            CALL sic_fp_get_pol_density(qs_env, dft_control)
+            CALL sic_fp_compute_pol_ehartree(qs_env, dft_control)
+
+!            IF (output_unit > 0) WRITE (*,*) 'inner scf: iter, delta_e_pol: ', iter_count, &
+!                        (energy%pol_ehartree-energy_store_tmp)*evolt ! Giorgio
+            energy_store_tmp=energy%pol_ehartree
+            CALL qs_scf_density_mixing(scf_env, rho, para_env, diis_step, dft_control)
 
             t2 = m_walltime()
 
@@ -519,6 +534,12 @@ CONTAINS
                EXIT scf_loop
             END IF
 
+            ! Exit if we have reached a decent polaron localization
+            IF (scf_env%switch_to_ot) THEN
+               CALL timestop(handle2)
+               EXIT scf_loop
+            END IF
+
             IF (.NOT. BTEST(cp_print_key_should_output(logger%iter_info, &
                                                        scf_section, "PRINT%ITERATION_INFO/TIME_CUMUL"), cp_p_file)) &
                t1 = m_walltime()
@@ -531,14 +552,31 @@ CONTAINS
                      CALL dbcsr_copy(rho_ao_kp(ispin, ic)%matrix, scf_env%p_mix_new(ispin, ic)%matrix, name=name)
                   END DO
                END DO
+               
+               ! sic_fp
+              IF (dft_control%do_sic_fp .AND. scf_env%mixing_method .EQ. direct_mixing_nr) THEN 
+                  CALL qs_rho_get(rho, rho_pol=rho_pol)
+                  DO ispin = 1, dft_control%nspins
+                     CALL dbcsr_set(rho_pol(ispin)%matrix, 0.0_dp)
+                     CALL dbcsr_get_info(rho_pol(ispin)%matrix, name=name) ! keep the name
+                                    ! target, source
+                     CALL dbcsr_copy(rho_pol(ispin)%matrix, scf_env%p_mix_new_pol(ispin)%matrix, name=name)
+                  END DO
+               END IF
             END IF
-
             CALL qs_scf_rho_update(rho, qs_env, scf_env, ks_env, &
                                    mix_rho=scf_env%mixing_method >= gspace_mixing_nr)
 
             CALL timestop(handle2)
 
          END DO scf_loop
+
+         ! go to the next iteration if we want to switch to OT, Giorgio
+!         IF (scf_env%switch_to_ot) THEN
+!               scf_env%switch_to_ot = .FALSE.
+!               scf_env%method = ot_method_nr 
+!               CYCLE scf_outer_loop
+!         END IF
 
          IF (.NOT. scf_control%outer_scf%have_scf) EXIT scf_outer_loop
 
@@ -564,7 +602,7 @@ CONTAINS
          CALL outer_loop_optimize(scf_env, scf_control)
          CALL outer_loop_update_qs_env(qs_env, scf_env)
          CALL qs_ks_did_change(ks_env, potential_changed=.TRUE.)
-
+      
       END DO scf_outer_loop
 
       converged = inner_loop_converged .AND. outer_loop_converged
@@ -877,6 +915,10 @@ CONTAINS
 
       IF (ASSOCIATED(scf_env%p_mix_new)) THEN
          CALL dbcsr_deallocate_matrix_set(scf_env%p_mix_new)
+      END IF
+
+      IF (ASSOCIATED(scf_env%p_mix_new_pol)) THEN
+         CALL dbcsr_deallocate_matrix_set(scf_env%p_mix_new_pol)
       END IF
 
       IF (ASSOCIATED(scf_env%p_delta)) THEN

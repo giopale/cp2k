@@ -489,8 +489,8 @@ CONTAINS
          CALL elpa_obj%set("gpu", 1, success)
          CPASSERT(success == elpa_ok)
       END IF
-
       CALL elpa_obj%set("real_kernel", elpa_kernel, success)
+! WRITE(*,*) 'cp_fm_diag_elpa_base: elpa_kernel: ', elpa_kernel, '\n success: ',success ! Giorgio
       CPASSERT(success == elpa_ok)
 
       IF (use_qr) THEN

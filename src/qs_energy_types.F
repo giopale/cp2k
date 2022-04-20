@@ -72,7 +72,8 @@ MODULE qs_energy_types
                        surf_dipole, &
                        embed_corr, & ! correction for embedding potential
                        xtb_xb_inter, & ! correction for halogen bonding within GFN1-xTB
-                       xtb_nonbonded ! correction for nonbonded interactions within GFN1-xTB
+                       xtb_nonbonded, & ! correction for nonbonded interactions within GFN1-xTB
+                       pol_ehartree ! polaron Hartree energy
       REAL(KIND=dp), DIMENSION(:), POINTER :: ddapc_restraint
    END TYPE qs_energy_type
 
@@ -190,6 +191,7 @@ CONTAINS
          qs_energy%total = 0.0_dp
          qs_energy%singles_corr = 0.0_dp
          qs_energy%nonscf_correction = 0.0_dp
+         qs_energy%pol_ehartree = 0.0_dp ! Giorgio
          IF (.NOT. ASSOCIATED(qs_energy%ddapc_restraint)) THEN
             ALLOCATE (qs_energy%ddapc_restraint(1))
          END IF

@@ -111,11 +111,14 @@ CONTAINS
 !>      02.2019 charge mixing [JGH]
 !> \author fawzi
 ! **************************************************************************************************
-   SUBROUTINE mixing_allocate(qs_env, mixing_method, p_mix_new, p_delta, nspins, mixing_store)
+   SUBROUTINE mixing_allocate(qs_env, mixing_method, p_mix_new, p_delta, &
+                              nspins, mixing_store, p_mix_new_pol)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       INTEGER                                            :: mixing_method
       TYPE(dbcsr_p_type), DIMENSION(:, :), OPTIONAL, &
          POINTER                                         :: p_mix_new, p_delta
+      TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
+         POINTER                                         :: p_mix_new_pol
       INTEGER, INTENT(IN)                                :: nspins
       TYPE(mixing_storage_type), POINTER                 :: mixing_store
 
@@ -158,6 +161,20 @@ CONTAINS
                   CALL cp_dbcsr_alloc_block_from_nbl(p_mix_new(i, ic)%matrix, sab_orb)
                   CALL dbcsr_set(p_mix_new(i, ic)%matrix, 0.0_dp)
                ENDDO
+            ENDDO
+         END IF
+      END IF
+
+      !   *** allocate p_mix_new_pol ***
+      IF (PRESENT(p_mix_new_pol)) THEN
+         IF (dft_control%do_sic_fp .AND. .NOT. ASSOCIATED(p_mix_new_pol)) THEN
+            CALL dbcsr_allocate_matrix_set(p_mix_new_pol, nspins)
+            DO i = 1, nspins
+               ALLOCATE (p_mix_new_pol(i)%matrix)
+               CALL dbcsr_create(matrix=p_mix_new_pol(i)%matrix, template=refmatrix, &
+                                 name="SCF DENSITY", matrix_type=dbcsr_type_symmetric, nze=0)
+               CALL cp_dbcsr_alloc_block_from_nbl(p_mix_new_pol(i)%matrix, sab_orb)
+               CALL dbcsr_set(p_mix_new_pol(i)%matrix, 0.0_dp)
             ENDDO
          END IF
       END IF

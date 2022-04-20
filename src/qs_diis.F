@@ -34,7 +34,8 @@ MODULE qs_diis
    USE cp_gemm_interface,               ONLY: cp_gemm
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_type,&
-                                              cp_to_string
+                                              cp_to_string, &
+                                              cp_logger_get_default_io_unit
    USE cp_output_handling,              ONLY: cp_print_key_finished_output,&
                                               cp_print_key_unit_nr
    USE cp_para_types,                   ONLY: cp_para_env_type
@@ -273,7 +274,7 @@ CONTAINS
 
       NULLIFY (c, new_errors, old_errors, parameters, matrix_struct, a, b, occa, occb)
       logger => cp_get_default_logger()
-
+      output_unit = cp_logger_get_default_io_unit(logger) ! Giorgio
       ! Quick return, if no DIIS is requested
 
       IF (diis_buffer%nbuffer < 1) THEN
@@ -312,6 +313,12 @@ CONTAINS
 
          CALL cp_fm_to_fm(kc(ispin)%matrix, parameters)
 
+! Crei un caso qui per il sic_fp e metti la il mo_coeff del polarone al posto di
+! c. Da capire come questo interagisce con la matrice S degli overlap. Da capire
+! in che caso si utilizza cp_fm (questa routine) e in che caso dbcsr (verificare
+! dove)
+
+! 
          IF (my_roks) THEN
 
             ALLOCATE (occ(nmo))
@@ -325,7 +332,6 @@ CONTAINS
 
             CALL cp_fm_to_fm(c, sc)
             CALL cp_fm_column_scale(sc, occ(1:homo))
-
             ! KC <- K*C
             CALL cp_fm_symm("L", "U", nao, homo, 1.0_dp, parameters, sc, 0.0_dp, kc(ispin)%matrix)
 

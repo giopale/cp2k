@@ -102,7 +102,7 @@ MODULE qs_environment
         do_qmmm_swave, general_roks, kg_tnadd_embed_ri, rel_none, rel_trans_atom, &
         vdw_pairpot_dftd3, vdw_pairpot_dftd3bj, wfi_aspc_nr, wfi_linear_ps_method_nr, &
         wfi_linear_wf_method_nr, wfi_ps_method_nr, wfi_use_guess_method_nr, xc_vdw_fun_none, &
-        xc_vdw_fun_nonloc, xc_vdw_fun_pairpot
+        xc_vdw_fun_nonloc, xc_vdw_fun_pairpot, sic_eo
    USE input_section_types,             ONLY: section_vals_get,&
                                               section_vals_get_subs_vals,&
                                               section_vals_type,&
@@ -1034,6 +1034,8 @@ CONTAINS
       ELSE
          IF (scf_control%use_ot) THEN
             CALL set_qs_env(qs_env=qs_env, requires_mo_derivs=.TRUE.)
+         ELSE IF (dft_control%sic_method_id == sic_eo) THEN
+            CALL set_qs_env(qs_env=qs_env, requires_mo_derivs=.TRUE.)
          ELSE
             CALL set_qs_env(qs_env=qs_env, requires_mo_derivs=.FALSE.)
          ENDIF
@@ -1479,6 +1481,14 @@ CONTAINS
          WRITE (output_unit, *) " experimental feature, check code      "
          WRITE (output_unit, *) " **************************************"
       ENDIF
+      ! Giorgio
+      ! sic_fp requires an additional orbital in the beta channel when treating
+      ! hole polarons
+      IF (dft_control%do_sic_fp) THEN
+            IF (dft_control%charge .EQ. 1) THEN
+            n_mo(2) = n_mo(2) + 1
+            END IF 
+      END IF
 
       ! no point in allocating these things here ?
       IF (dft_control%qs_control%do_ls_scf) THEN
@@ -1526,7 +1536,7 @@ CONTAINS
             NULLIFY (mos_last_converged(ispin)%mo_set)
             CALL allocate_mo_set(mo_set=mos_last_converged(ispin)%mo_set, &
                                  nao=n_ao, &
-                                 nmo=n_mo(ispin), &
+                                 nmo=n_mo(ispin), & 
                                  nelectron=nelectron_spin(ispin), &
                                  n_el_f=REAL(nelectron_spin(ispin), dp), &
                                  maxocc=maxocc, &

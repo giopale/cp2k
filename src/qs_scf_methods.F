@@ -67,7 +67,8 @@ MODULE qs_scf_methods
              eigensolver_dbcsr, &
              eigensolver_symm, &
              eigensolver_simple, &
-             scf_env_density_mixing
+             scf_env_density_mixing, &
+             scf_env_density_mixing_pol
 
    PRIVATE :: correct_mo_eigenvalues, shift_unocc_mos
 
@@ -110,7 +111,7 @@ CONTAINS
       REAL(KIND=dp)                                      :: my_p_mix, tmp
 
       CALL timeset(routineN, handle)
-
+      
       my_diis = .FALSE.
       IF (PRESENT(diis)) my_diis = diis
       my_invert = .FALSE.
@@ -147,6 +148,73 @@ CONTAINS
 
    END SUBROUTINE scf_env_density_mixing
 
+! **************************************************************************************************
+!> \brief perform (if requested) a density mixing on the polaron density (sic_fp)
+!> \param p_mix_new    New density matrices
+!> \param mixing_store ...
+!> \param rho_ao       Density environment
+!> \param para_env ...
+!> \param iter_delta ...
+!> \param iter_count ...
+!> \param diis ...
+!> \param invert       Invert mixing
+!> \par History
+!>      02.2003 created [fawzi]
+!>      08.2014 adapted for kpoints [JGH]
+!> \author fawzi
+! **************************************************************************************************
+   SUBROUTINE scf_env_density_mixing_pol(p_mix_new_pol, mixing_store, rho_pol, para_env, &
+                                     iter_delta, iter_count, diis, invert)
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: p_mix_new_pol
+      TYPE(mixing_storage_type), POINTER                 :: mixing_store
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho_pol
+      TYPE(cp_para_env_type), POINTER                    :: para_env
+      REAL(KIND=dp), INTENT(INOUT)                       :: iter_delta
+      INTEGER, INTENT(IN)                                :: iter_count
+      LOGICAL, INTENT(in), OPTIONAL                      :: diis, invert
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'scf_env_density_mixing_pol'
+
+      INTEGER                                            :: handle, ispin
+      LOGICAL                                            :: my_diis, my_invert
+      REAL(KIND=dp)                                      :: my_p_mix, tmp
+
+      CALL timeset(routineN, handle)
+      
+      my_diis = .FALSE.
+      IF (PRESENT(diis)) my_diis = diis
+      my_invert = .FALSE.
+      IF (PRESENT(invert)) my_invert = invert
+      my_p_mix = mixing_store%alpha
+      IF (my_diis .OR. iter_count < mixing_store%nskip_mixing) THEN
+!         my_p_mix = 1.0_dp
+      END IF
+
+      iter_delta = 0.0_dp
+      CPASSERT(ASSOCIATED(p_mix_new_pol))
+      
+      DO ispin = 1, SIZE(p_mix_new_pol, 1)
+         IF (my_invert) THEN
+            CPASSERT(my_p_mix /= 0.0_dp)
+            IF (my_p_mix /= 1.0_dp) THEN
+               CALL dbcsr_add(matrix_a=p_mix_new_pol(ispin)%matrix, &
+                              alpha_scalar=1.0_dp/my_p_mix, &
+                              matrix_b=rho_pol(ispin)%matrix, &
+                              beta_scalar=(my_p_mix - 1.0_dp)/my_p_mix)
+            END IF
+         ELSE
+            CALL cp_sm_mix(m1=p_mix_new_pol(ispin)%matrix, &
+                           m2=rho_pol(ispin)%matrix, &
+                           p_mix=my_p_mix, &
+                           delta=tmp, &
+                           para_env=para_env)
+            iter_delta = MAX(iter_delta, tmp)
+         END IF
+      END DO
+
+      CALL timestop(handle)
+
+   END SUBROUTINE scf_env_density_mixing_pol
 ! **************************************************************************************************
 !> \brief   Diagonalise the Kohn-Sham matrix to get a new set of MO eigen-
 !>          vectors and MO eigenvalues. ks will be modified

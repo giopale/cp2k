@@ -90,6 +90,7 @@ MODULE input_cp2k_dft
         rel_zora_full, rel_zora_mp, restart_guess, rsdft_model, sccs_andreussi, &
         sccs_derivative_cd3, sccs_derivative_cd5, sccs_derivative_cd7, sccs_derivative_fft, &
         sccs_fattebert_gygi, shape_function_density, shape_function_gaussian, sic_ad, sic_eo, &
+        sic_fp, &
         sic_list_all, sic_list_unpaired, sic_mauri_spz, sic_mauri_us, sic_none, slater, &
         smear_energy_window, smear_fermi_dirac, smear_list, sparse_guess, tddfpt_davidson, &
         tddfpt_excitations, tddfpt_lanczos, tddfpt_singlet, tddfpt_spin_cons, tddfpt_spin_flip, &
@@ -377,6 +378,15 @@ CONTAINS
                           enum_desc=s2a("don't sort", "sort w.r.t. exponent"), &
                           default_i_val=basis_sort_default, &
                           usage="SORT_BASIS EXP")
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, & ! Giorgio
+                          name="DIIS_SKIP", &
+                          description="Skip diis step ", &
+                          usage="DIIS_SKIP .TRUE.", &
+                          default_l_val=.FALSE., &
+                          lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
@@ -6768,7 +6778,7 @@ CONTAINS
       CPASSERT(.NOT. ASSOCIATED(section))
       CALL section_create(section, __LOCATION__, name="sic", &
                           description="parameters for the self interaction correction", &
-                          n_keywords=6, n_subsections=0, repeats=.FALSE., &
+                          n_keywords=7, n_subsections=0, repeats=.FALSE., &
                           citations=(/VandeVondele2005b, Perdew1981, Avezac2005/))
 
       NULLIFY (keyword)
@@ -6793,15 +6803,16 @@ CONTAINS
                           description="Method used to remove the self interaction", &
                           usage="SIC_METHOD MAURI_US", &
                           default_i_val=sic_none, &
-                          enum_c_vals=s2a("NONE", "MAURI_US", "MAURI_SPZ", "AD", "EXPLICIT_ORBITALS"), &
-                          enum_i_vals=(/sic_none, sic_mauri_us, sic_mauri_spz, sic_ad, sic_eo/), &
+                          enum_c_vals=s2a("NONE", "MAURI_US", "MAURI_SPZ", "AD", "EXPLICIT_ORBITALS", "FP"), &
+                          enum_i_vals=(/sic_none, sic_mauri_us, sic_mauri_spz, sic_ad, sic_eo, sic_fp/), &
                           enum_desc=s2a("Do not apply a sic correction", &
                                         "Employ a (scaled) correction proposed by Mauri and co-workers"// &
                                         " on the spin density / doublet unpaired orbital", &
                                         "Employ a (scaled) Perdew-Zunger expression"// &
                                         " on the spin density / doublet unpaired orbital", &
                                         "The average density correction", &
-                                        "(scaled) Perdew-Zunger correction explicitly on a set of orbitals."), &
+                                        "(scaled) Perdew-Zunger correction explicitly on a set of orbitals",&
+                                        "Employ correction scheme proposed by Falletta and Pasquarello"), &
                           citations=(/VandeVondele2005b, Perdew1981, Avezac2005/))
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
@@ -6814,6 +6825,21 @@ CONTAINS
                           enum_desc=s2a("correction for the unpaired orbitals only, requires a restricted open shell calculation", &
                                         "correction for all orbitals, requires a LSD or ROKS calculation"), &
                           enum_i_vals=(/sic_list_unpaired, sic_list_all/))
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="GAMMA", &
+                          description="Strenght of perturbation potential in gamma-DFT", &
+                          usage="GAMMA 1.0", &
+                          default_r_val=1.0_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+      
+      CALL keyword_create(keyword, __LOCATION__, name="DIIS_SKIP", &
+                          description="controls the activation of the DIIS method", &
+                          usage="&DIIS_SKIP T", &
+                          default_l_val=.FALSE., &
+                          lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 

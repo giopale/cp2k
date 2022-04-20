@@ -484,14 +484,14 @@ CONTAINS
             IF ((ABS(scf_env%iter_delta) < 1.0E-8_dp) .OR. &
                 (ABS(scf_env%iter_delta) >= 1.0E5_dp)) THEN
                WRITE (UNIT=output_unit, &
-                      FMT="(T2,I5,1X,A,T20,E8.2,1X,F6.1,1X,ES14.4,1X,F20.10,1X,ES9.2)") &
+                      FMT="(T2,I5,1X,A,T20,E8.2,1X,F6.1,1X,ES14.4,1X,F20.10,1X,ES9.2,1X,F14.8)") &
                   scf_env%iter_count, TRIM(scf_env%iter_method), scf_env%iter_param, &
-                  t2 - t1, scf_env%iter_delta, energy%total, energy%total - energy%tot_old
+                  t2 - t1, scf_env%iter_delta, energy%total, energy%total - energy%tot_old, energy%pol_ehartree*evolt ! Giorgio
             ELSE
                WRITE (UNIT=output_unit, &
-                      FMT="(T2,I5,1X,A,T20,E8.2,1X,F6.1,1X,F14.8,1X,F20.10,1X,ES9.2)") &
+                      FMT="(T2,I5,1X,A,T20,E8.2,1X,F6.1,1X,F14.8,1X,F20.10,1X,ES9.2,1X,F14.8)") &
                   scf_env%iter_count, TRIM(scf_env%iter_method), scf_env%iter_param, &
-                  t2 - t1, scf_env%iter_delta, energy%total, energy%total - energy%tot_old
+                  t2 - t1, scf_env%iter_delta, energy%total, energy%total - energy%tot_old, energy%pol_ehartree*evolt
             END IF
          END IF
       END IF

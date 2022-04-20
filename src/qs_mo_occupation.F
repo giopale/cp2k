@@ -522,7 +522,9 @@ CONTAINS
       END IF
 
       ! Quick return, if no smearing information is supplied (TO BE FIXED, smear should become non-optional...)
-      IF (.NOT. PRESENT(smear)) THEN
+     ! IF (.NOT. PRESENT(smear)) THEN
+      IF (.NOT. smear%do_smear) THEN ! Giorgio: I want this instructions to pass
+                                     ! with PRESENT(smear) .AND. (smear%do_smear == .FALSE.)
          ! there is no dependence of the energy on the eigenvalues
          mo_set%uniform_occupation = .TRUE.
          IF (PRESENT(eval_deriv)) THEN

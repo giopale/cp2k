@@ -91,7 +91,7 @@ CONTAINS
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(pw_env_type), POINTER                         :: pw_env
       TYPE(pw_p_type)                                    :: rho_tmp
-      TYPE(pw_p_type), DIMENSION(:), POINTER             :: rho_g, rho_r
+      TYPE(pw_p_type), DIMENSION(:), POINTER             :: rho_g, rho_r, pol_r, pol_g
       TYPE(pw_pool_type), POINTER                        :: auxbas_pw_pool
       TYPE(rho_atom_type), DIMENSION(:), POINTER         :: rho_atom
 
@@ -102,8 +102,9 @@ CONTAINS
                  dft_control%qs_control%semi_empirical)) THEN
 
          CPASSERT(ASSOCIATED(mixing_store))
-         NULLIFY (auxbas_pw_pool, rho_ao_kp, rho_atom, rho_g, rho_r, tot_rho_r)
-         CALL qs_rho_get(rho, rho_ao_kp=rho_ao_kp, rho_g=rho_g, rho_r=rho_r, tot_rho_r=tot_rho_r)
+         NULLIFY (auxbas_pw_pool, rho_ao_kp, rho_atom, rho_g, rho_r, tot_rho_r, pol_r, pol_g)
+         CALL qs_rho_get(rho, rho_ao_kp=rho_ao_kp, rho_g=rho_g, rho_r=rho_r, &
+                         tot_rho_r=tot_rho_r, pol_r=pol_r, pol_g=pol_g)
 
          nspin = SIZE(rho_g, 1)
          nimg = dft_control%nimages

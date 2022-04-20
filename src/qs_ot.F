@@ -31,6 +31,7 @@ MODULE qs_ot
    USE preconditioner,                  ONLY: apply_preconditioner
    USE preconditioner_types,            ONLY: preconditioner_type
    USE qs_ot_types,                     ONLY: qs_ot_type
+USE dbcsr_methods, ONLY: dbcsr_get_data_type ! Giorgio
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -1252,6 +1253,8 @@ CONTAINS
 
       ! go for the derivative now
       ! this de/dc*(dX/dx)*sinp i.e. zeroth order
+!WRITE(*,*) 'qs_ot_get_derivative_taylor: matrix_hc: ', dbcsr_get_data_type(matrix_hc)
+!WRITE(*,*) 'qs_ot_get_derivative_taylor: matrix_sinp: ', dbcsr_get_data_type(qs_ot_env%matrix_sinp)
       CALL dbcsr_multiply('N', 'N', rone, matrix_hc, qs_ot_env%matrix_sinp, rzero, matrix_gx)
 
       IF (qs_ot_env%taylor_order .LE. 0) THEN

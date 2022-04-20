@@ -683,7 +683,8 @@ CONTAINS
       ! mixing storage allocation
       IF (subspace_env%mixing_method >= gspace_mixing_nr) THEN
          CALL mixing_allocate(qs_env, subspace_env%mixing_method, scf_env%p_mix_new, &
-                              scf_env%p_delta, nspin, subspace_env%mixing_store)
+                              scf_env%p_delta, nspin, subspace_env%mixing_store, &
+                              scf_env%p_mix_new_pol)
          IF (dft_control%qs_control%gapw) THEN
             CALL get_qs_env(qs_env=qs_env, rho_atom_set=rho_atom)
             CALL mixing_init(subspace_env%mixing_method, rho, subspace_env%mixing_store, &
@@ -1061,7 +1062,7 @@ CONTAINS
 
       CALL set_mo_occupation(mo_array=mos, &
                              smear=scf_control%smear)
-
+WRITE(*,*) 'do_ot_diag: ASSOCIATED(p_mix_new): ', ASSOCIATED(scf_env%p_mix_new)
       DO ispin = 1, nspin
          ! does not yet handle k-points
          CALL calculate_density_matrix(mos(ispin)%mo_set, &

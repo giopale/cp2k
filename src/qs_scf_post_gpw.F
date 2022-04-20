@@ -27,7 +27,8 @@ MODULE qs_scf_post_gpw
    USE cp_blacs_env,                    ONLY: cp_blacs_env_type
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
-                                              dbcsr_deallocate_matrix_set
+                                              dbcsr_deallocate_matrix_set, &
+                                              cp_dbcsr_plus_fm_fm_t
    USE cp_dbcsr_output,                 ONLY: cp_dbcsr_write_sparse_matrix
    USE cp_ddapc_util,                   ONLY: get_ddapc
    USE cp_fm_diag,                      ONLY: choose_eigv_solver
@@ -53,7 +54,10 @@ MODULE qs_scf_post_gpw
    USE cp_para_types,                   ONLY: cp_para_env_type
    USE cp_realspace_grid_cube,          ONLY: cp_pw_to_cube
    USE dbcsr_api,                       ONLY: dbcsr_p_type,&
-                                              dbcsr_type
+                                              dbcsr_type, &
+                                              dbcsr_copy, &
+                                              dbcsr_set, &
+                                              dbcsr_deallocate_matrix
    USE dct,                             ONLY: pw_shrink
    USE et_coupling_types,               ONLY: set_et_coupling_type
    USE hirshfeld_methods,               ONLY: comp_hirshfeld_charges,&
@@ -142,6 +146,7 @@ MODULE qs_scf_post_gpw
    USE qs_environment_types,            ONLY: get_qs_env,&
                                               qs_environment_type,&
                                               set_qs_env
+   USE qs_collocate_density,            ONLY: calculate_rho_elec
    USE qs_epr_hyp,                      ONLY: qs_epr_hyp_calc
    USE qs_grid_atom,                    ONLY: grid_atom_type
    USE qs_integral_utils,               ONLY: basis_set_list_setup
@@ -149,7 +154,9 @@ MODULE qs_scf_post_gpw
                                               qs_kind_type
    USE qs_ks_methods,                   ONLY: calc_rho_tot_gspace,&
                                               qs_ks_update_qs_env
-   USE qs_ks_types,                     ONLY: qs_ks_did_change
+   USE qs_ks_types,                     ONLY: qs_ks_did_change, &
+                                              qs_ks_env_type
+   USE qs_ks_utils,                     ONLY: sic_fp_get_pol_density_post_gpw
    USE qs_loc_dipole,                   ONLY: loc_dipole
    USE qs_loc_states,                   ONLY: get_localization_info
    USE qs_loc_types,                    ONLY: qs_loc_env_create,&
@@ -821,7 +828,7 @@ CONTAINS
          END IF
 
          CALL ot_eigensolver(matrix_h=ks_rmpv(ispin)%matrix, matrix_s=matrix_s(1)%matrix, &
-                             matrix_c_fm=unoccupied_orbs(ispin)%matrix, &
+                            matrix_c_fm=unoccupied_orbs(ispin)%matrix, &
                              matrix_orthogonal_space_fm=mo_coeff, &
                              eps_gradient=scf_control%eps_lumos, &
                              preconditioner=local_preconditioner, &
@@ -836,12 +843,13 @@ CONTAINS
          IF (dft_control%do_admm) THEN
             CALL admm_uncorrect_for_eigenvalues(ispin, admm_env, ks_rmpv(ispin)%matrix)
          END IF
-
       END DO
 
+       CALL sic_fp_get_pol_density_post_gpw(qs_env, dft_control, unoccupied_orbs)
       CALL timestop(handle)
 
    END SUBROUTINE make_lumo_gpw
+
 ! **************************************************************************************************
 !> \brief Computes and Prints Atomic Charges with several methods
 !> \param input ...

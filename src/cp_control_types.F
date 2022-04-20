@@ -531,6 +531,7 @@ MODULE cp_control_types
       REAL(KIND=dp)                        :: relax_multiplicity, &
                                               sic_scaling_a, &
                                               sic_scaling_b, &
+                                              sic_gamma, &
                                               pos_dir_surf_dip
       LOGICAL                              :: do_tddfpt_calculation, &
                                               do_xas_calculation, &
@@ -562,7 +563,9 @@ MODULE cp_control_types
                                               correct_el_density_dip, &
                                               do_sccs, &
                                               apply_embed_pot, &
-                                              apply_dmfet_pot
+                                              apply_dmfet_pot, &
+                                              do_sic_fp, &
+                                              sic_skip_diis
    END TYPE dft_control_type
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'cp_control_types'
@@ -803,6 +806,7 @@ CONTAINS
       dft_control%do_sccs = .FALSE.
       dft_control%apply_embed_pot = .FALSE.
       dft_control%apply_dmfet_pot = .FALSE.
+      dft_control%do_sic_fp = .FALSE.
       CALL qs_control_create(dft_control%qs_control)
       CALL tddfpt2_control_create(dft_control%tddfpt2_control)
    END SUBROUTINE dft_control_create

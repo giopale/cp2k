@@ -49,7 +49,7 @@ MODULE qs_scf_initialization
         broy_mix, broy_mix_new, cholesky_dbcsr, cholesky_inverse, cholesky_off, &
         diag_block_davidson, diag_block_krylov, diag_filter_matrix, diag_ot, diag_standard, &
         direct_p_mix, kerker_mix, multisec_mix, no_mix, ot2cdft, outer_scf_none, plus_u_lowdin, &
-        pulay_mix, wfi_frozen_method_nr, wfi_ps_method_nr, wfi_use_guess_method_nr
+        pulay_mix, wfi_frozen_method_nr, wfi_ps_method_nr, wfi_use_guess_method_nr, sic_eo
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
                                               section_vals_type,&
                                               section_vals_val_get
@@ -141,7 +141,6 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: dft_section, input, my_scf_section
 
       CALL get_qs_env(qs_env, input=input, dft_control=dft_control)
-
       IF (PRESENT(scf_control)) THEN
          my_scf_control => scf_control
       ELSE
@@ -389,7 +388,7 @@ CONTAINS
       IF (scf_env%mixing_method > 0) THEN
          CALL mixing_allocate(qs_env, scf_env%mixing_method, scf_env%p_mix_new, &
                               scf_env%p_delta, dft_control%nspins, &
-                              scf_env%mixing_store)
+                              scf_env%mixing_store, scf_env%p_mix_new_pol)
       ELSE
          NULLIFY (scf_env%p_mix_new)
       END IF
@@ -555,7 +554,6 @@ CONTAINS
       TYPE(xas_environment_type), POINTER                :: xas_env
 
       CALL timeset(routineN, handle)
-
       NULLIFY (ao_mo_fm_pools, dft_control, mos, ao_mo_fm_pools_aux_fit)
       NULLIFY (mo_derivs, mo_coeff, mo_coeff_aux_fit, mo_derivs_aux_fit, xas_env, matrix_s)
       NULLIFY (mos_last_converged, mo_coeff_last)
@@ -577,7 +575,6 @@ CONTAINS
 
       nmo_mat = dft_control%nspins
       IF (dft_control%restricted) nmo_mat = 1 ! right now, there might be more mos than needed derivs
-
 !   *** finish initialization of the MOs ***
       CPASSERT(ASSOCIATED(mos))
       DO ispin = 1, SIZE(mos)
@@ -760,6 +757,9 @@ CONTAINS
             scf_env%skip_diis = .TRUE.
             CPWARN("the DIIS scheme is disabled, since EPS_DIIS < EPS_SCF")
          END IF
+     !    IF (dft_control%do_sic_fp) THEN 
+            scf_env%skip_diis = dft_control%sic_skip_diis ! Giorgio
+     !    END IF
       END IF
 
    END SUBROUTINE qs_scf_ensure_mixing
@@ -795,7 +795,8 @@ CONTAINS
 
       IF (scf_control%use_diag) THEN
          ! sanity check whether combinations are allowed
-         IF (dft_control%restricted) &
+         ! Giorgio: allow restricted when using sic_eo
+         IF (dft_control%restricted .AND. .NOT. (dft_control%sic_method_id == sic_eo)) &
             CPABORT("OT only for restricted (ROKS)")
          SELECT CASE (scf_control%diagonalization%method)
          CASE (diag_ot, diag_block_krylov, diag_block_davidson)

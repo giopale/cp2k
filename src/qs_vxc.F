@@ -23,6 +23,7 @@ MODULE qs_vxc
                                               sic_mauri_spz,&
                                               sic_mauri_us,&
                                               sic_none,&
+                                              sic_fp,&
                                               xc_none,&
                                               xc_vdw_fun_nonloc
    USE input_section_types,             ONLY: section_vals_type,&
@@ -51,11 +52,15 @@ MODULE qs_vxc
    USE qs_dispersion_types,             ONLY: qs_dispersion_type
    USE qs_ks_types,                     ONLY: get_ks_env,&
                                               qs_ks_env_type
+   USE qs_environment_types,            ONLY: qs_environment_type
+   USE pw_env_types,                    ONLY: pw_env_type
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
    USE virial_types,                    ONLY: virial_type
    USE xc,                              ONLY: xc_exc_calc,&
                                               xc_vxc_pw_create1
+   USE dbcsr_api,                       ONLY: dbcsr_p_type
+   USE qs_ks_utils,                     ONLY: sic_fp_calc_xc_correction
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -100,7 +105,7 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE qs_vxc_create(ks_env, rho_struct, xc_section, vxc_rho, vxc_tau, exc, &
                             just_energy, edisp, dispersion_env, adiabatic_rescale_factor, &
-                            pw_env_external)
+                            pw_env_external, qs_env)
 
       TYPE(qs_ks_env_type), POINTER                      :: ks_env
       TYPE(qs_rho_type), POINTER                         :: rho_struct
@@ -112,6 +117,7 @@ CONTAINS
       TYPE(qs_dispersion_type), OPTIONAL, POINTER        :: dispersion_env
       REAL(KIND=dp), INTENT(in), OPTIONAL                :: adiabatic_rescale_factor
       TYPE(pw_env_type), OPTIONAL, POINTER               :: pw_env_external
+      TYPE(qs_environment_type), OPTIONAL, POINTER       :: qs_env
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'qs_vxc_create'
 
@@ -212,6 +218,8 @@ CONTAINS
             CPASSERT(.NOT. tau_r_valid)
          CASE (sic_eo)
             ! NOTHING TO BE DONE
+         CASE (sic_fp)
+            ! Nothing to be done
          CASE DEFAULT
             ! this case has not yet been treated here
             CPABORT("NYI")
@@ -380,7 +388,7 @@ CONTAINS
             END DO
             DEALLOCATE (my_vxc_tau)
          END IF
-
+!----------------------> SIC MAURI PERDEW ZUNGER <---------------------------
          ! compute again the xc but now for Exc(m,o) and the opposite sign
          IF (dft_control%sic_method_id .EQ. sic_mauri_spz .AND. .NOT. sic_scaling_b_zero) THEN
             ALLOCATE (rho_m_rspace(2), rho_m_gspace(2))
@@ -447,6 +455,14 @@ CONTAINS
          ENDIF
 
          ! now we have - sum_s N_s * Exc(rho_s/N_s,0)
+!------------------------> SIC FP <-----------------------------------
+!         IF (dft_control%do_sic_fp .AND. ASSOCIATED(qs_env)) THEN
+!            WRITE(*,*) '                        qs_vxc: ', my_just_energy
+              CALL sic_fp_calc_xc_correction(qs_env, dft_control,vxc_rho, &
+                                            my_just_energy,auxbas_pw_pool=auxbas_pw_pool) 
+!         END IF
+
+!------------------------> SIC AD <-------------------------
          IF (dft_control%sic_method_id .EQ. sic_ad .AND. .NOT. sic_scaling_b_zero) THEN
 
             ! find out how many elecs we have
@@ -516,7 +532,7 @@ CONTAINS
             DEALLOCATE (rho_m_gspace)
 
          ENDIF
-
+!---------------------------------> SIC MAURI <-----------------------------------
          ! compute again the xc but now for Exc(n_down,n_down)
          IF (dft_control%sic_method_id .EQ. sic_mauri_us .AND. .NOT. sic_scaling_b_zero) THEN
             rho_r(1)%pw => rho_struct_r(2)%pw
@@ -540,7 +556,10 @@ CONTAINS
                                       compute_virial=.FALSE., &
                                       virial_xc=virial_xc_tmp)
             END IF
-
+            ! Note: the product exc*myscaling done above is null
+            ! when sic_scaling_b has the default value of 1.0
+            ! and this gives the correct SIC Mauri scheme with
+            ! just exc_m.
             exc = exc + dft_control%sic_scaling_b*exc_m
 
             ! and take care of the potential
@@ -554,8 +573,7 @@ CONTAINS
             ENDIF
 
          ENDIF
-
-         !
+         
          ! cleanups
          !
          IF (uf_grid) THEN

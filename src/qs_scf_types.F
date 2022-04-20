@@ -104,11 +104,13 @@ MODULE qs_scf_types
       CHARACTER(len=15) :: iter_method
       COMPLEX(KIND=dp), DIMENSION(:, :, :), POINTER :: cc_buffer
       LOGICAL :: print_iter_line, skip_mixing, skip_diis, needs_ortho
+      LOGICAL :: switch_to_ot ! Giorgio
       TYPE(mixing_storage_type), POINTER :: mixing_store
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER :: scf_work1
       TYPE(cp_fm_type), POINTER  :: scf_work2, ortho, ortho_m1, s_half, s_minus_one
       TYPE(krylov_space_type), POINTER :: krylov_space
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER :: p_delta, p_mix_new
+      TYPE(dbcsr_p_type), DIMENSION( :), POINTER :: p_mix_new_pol
       TYPE(dbcsr_type), POINTER :: ortho_dbcsr, buf1_dbcsr, buf2_dbcsr
       TYPE(preconditioner_p_type), DIMENSION(:), POINTER :: ot_preconditioner
       TYPE(qs_ot_type), POINTER, DIMENSION(:)  :: qs_ot_env
@@ -156,6 +158,7 @@ CONTAINS
       scf_env%skip_mixing = .FALSE.
       scf_env%skip_diis = .FALSE.
       scf_env%needs_ortho = .FALSE.
+      scf_env%switch_to_ot= .FALSE. ! Giorgio
       scf_env%method = -1
       scf_env%mixing_method = -1
       scf_env%p_mix_alpha = 1.0_dp
@@ -174,6 +177,7 @@ CONTAINS
       NULLIFY (scf_env%ortho_dbcsr)
       NULLIFY (scf_env%ortho_m1)
       NULLIFY (scf_env%p_mix_new)
+      NULLIFY (scf_env%p_mix_new_pol)
       NULLIFY (scf_env%ot_preconditioner)
       NULLIFY (scf_env%qs_ot_env)
       NULLIFY (scf_env%scf_diis_buffer)
@@ -244,6 +248,9 @@ CONTAINS
       IF (ASSOCIATED(scf_env%p_mix_new)) THEN
          CALL dbcsr_deallocate_matrix_set(scf_env%p_mix_new)
       END IF
+      IF (ASSOCIATED(scf_env%p_mix_new_pol)) THEN
+         CALL dbcsr_deallocate_matrix_set(scf_env%p_mix_new_pol)
+      END IF
       IF (ASSOCIATED(scf_env%p_delta)) THEN
          CALL dbcsr_deallocate_matrix_set(scf_env%p_delta)
       END IF
@@ -304,6 +311,11 @@ CONTAINS
                ! we should not end up here, and give back using the pools
                CPASSERT(.TRUE.)
                CALL dbcsr_deallocate_matrix_set(scf_env%p_mix_new)
+            END IF
+            IF (ASSOCIATED(scf_env%p_mix_new_pol)) THEN
+               ! we should not end up here, and give back using the pools
+               CPASSERT(.TRUE.)
+               CALL dbcsr_deallocate_matrix_set(scf_env%p_mix_new_pol)
             END IF
             IF (ASSOCIATED(scf_env%p_delta)) THEN
                ! we should not end up here, and give back using the pools
