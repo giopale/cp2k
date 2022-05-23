@@ -40,12 +40,10 @@ MODULE qs_ks_utils
                                               cp_fm_release,&
                                               cp_fm_set_all,&
                                               cp_fm_to_fm,&
-                                              cp_fm_type, &
-                                              cp_fm_init_random
+                                              cp_fm_type
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_type,&
-                                              cp_to_string, &
-                                              cp_logger_get_default_io_unit
+                                              cp_to_string
    USE cp_output_handling,              ONLY: cp_p_file,&
                                               cp_print_key_finished_output,&
                                               cp_print_key_should_output,&
@@ -59,11 +57,10 @@ MODULE qs_ks_utils
         cdft_alpha_constraint, cdft_beta_constraint, cdft_charge_constraint, &
         cdft_magnetization_constraint, do_admm_aux_exch_func_none, do_ppl_grid, sic_ad, sic_eo, &
         sic_list_all, sic_list_unpaired, sic_mauri_spz, sic_mauri_us, sic_none,&
-        sic_fp, ot_precond_full_all
+        sic_fp
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
                                               section_vals_type,&
-                                              section_vals_val_get,&
-                                              section_get_keyword_index
+                                              section_vals_val_get
    USE kahan_sum,                       ONLY: accurate_sum
    USE kinds,                           ONLY: default_string_length,&
                                               dp
@@ -90,17 +87,13 @@ MODULE qs_ks_utils
                                               pw_integrate_function,&
                                               pw_scale,&
                                               pw_transfer,&
-                                              pw_zero, &
-                                              pw_integral_ab
+                                              pw_zero
    USE pw_poisson_methods,              ONLY: pw_poisson_solve
    USE pw_poisson_types,                ONLY: pw_poisson_implicit,&
                                               pw_poisson_type
    USE pw_pool_types,                   ONLY: pw_pool_create_pw,&
-                                              pw_pools_create_pws,&
                                               pw_pool_give_back_pw,&
-                                              pw_pools_give_back_pws,&
-                                              pw_pool_type, &
-                                              pw_pool_p_type
+                                              pw_pool_type
    USE pw_types,                        ONLY: COMPLEXDATA1D,&
                                               REALDATA3D,&
                                               REALSPACE,&
@@ -124,21 +117,11 @@ MODULE qs_ks_utils
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               mo_set_p_type
    USE qs_rho_types,                    ONLY: qs_rho_get,&
-                                              qs_rho_type, &
-                                              qs_rho_set
+                                              qs_rho_type
    USE task_list_types,                 ONLY: task_list_type
    USE virial_types,                    ONLY: virial_type
    USE xc,                              ONLY: xc_exc_calc,&
                                               xc_vxc_pw_create1
-   USE physcon,                         ONLY: evolt
-   USE qs_scf_types,                    ONLY: qs_scf_env_type
-   USE preconditioner_types,            ONLY: preconditioner_type
-   USE cp_blacs_env,                    ONLY: cp_blacs_env_type
-   USE scf_control_types,               ONLY: scf_control_type
-   USE qs_ot_eigensolver,               ONLY: ot_eigensolver
-   USE qs_density_mixing_types,         ONLY: direct_mixing_nr, &
-                                              no_mixing_nr
-   USE qs_mo_methods,                   ONLY: calculate_density_matrix
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -148,9 +131,7 @@ MODULE qs_ks_utils
    LOGICAL, PARAMETER :: debug_this_module = .TRUE.
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'qs_ks_utils'
 
-   PUBLIC :: low_spin_roks, sic_fp_get_pol_density_post_gpw, sic_fp_get_pol_density,&
-            sic_fp_calc_xc_correction, sic_fp_compute_pol_ehartree, &
-              sic_explicit_orbitals, calc_v_sic_rspace, print_densities, &
+   PUBLIC :: low_spin_roks, sic_fp_orbitals, sic_explicit_orbitals, calc_v_sic_rspace, print_densities, &
              print_detailed_energy, compute_matrix_vxc, sum_up_and_integrate, &
              calculate_zmp_potential, get_embed_potential_energy
 
@@ -402,367 +383,6 @@ CONTAINS
    END SUBROUTINE low_spin_roks
 
 
-! **************************************************************************************************
-!> \brief do sic calculations on explicit orbitals
-!> \param energy ...
-!> \param qs_env ...
-!> \param dft_control ...
-!> \param poisson_env ...
-!> \param just_energy ...
-! **************************************************************************************************
-   SUBROUTINE sic_fp_get_pol_density_post_gpw(qs_env, dft_control, unoccupied_orbs)
-
-      TYPE(qs_energy_type), POINTER                      :: energy
-      TYPE(qs_environment_type), POINTER                 :: qs_env
-      TYPE(qs_scf_env_type), POINTER                     :: scf_env
-      TYPE(dft_control_type), POINTER                    :: dft_control
-      TYPE(pw_poisson_type), POINTER                     :: poisson_env
-      TYPE(pw_pool_type), POINTER                        :: auxbas_pw_pool
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER :: unoccupied_orbs
-
-      CHARACTER(*), PARAMETER :: routineN = 'sic_fp_get_pol_density'
-
-      INTEGER                                            :: handle, Iorb, k_alpha, k_beta, Norb, &
-                                                            charge, sgn, sig, mu, nmo,n, output_unit
-      LOGICAL                                            :: uniform_occupation
-      REAL(KIND=dp)                                      ::  total_rho, ener
-      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_tmp
-      TYPE(cp_fm_type), POINTER                          :: matrix_v, mo_coeff
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho_pol
-      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mo_array
-      TYPE(pw_env_type), POINTER                         :: pw_env
-      TYPE(pw_p_type), DIMENSION(:), POINTER             :: pol_g, pol_r
-      
-      TYPE(pw_pool_type), POINTER                        :: xc_pw_pool
-      TYPE(qs_ks_env_type), POINTER                      :: ks_env
-      TYPE(qs_rho_type), POINTER                         :: rho
-      TYPE(section_vals_type), POINTER                   :: input
-      TYPE(cp_logger_type), POINTER                      :: logger
-
-      TYPE(admm_type), POINTER                           :: admm_env
-      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
-      TYPE(cp_para_env_type), POINTER                    :: para_env
-
-      TYPE(pw_p_type)                                    :: work_v_gspace
-
-      charge=dft_control%charge
-      sgn = -1
-      IF (charge .GT.0) sgn = 1
-      
-      CALL timeset(routineN, handle)
-
-      logger => cp_get_default_logger()
-      output_unit = cp_logger_get_default_io_unit(logger)
-
-      CPASSERT(ASSOCIATED(unoccupied_orbs))
-
-      NULLIFY ( ks_env, rho_pol)
-
-      ! generate the lists of orbitals that need sic treatment
-      CALL get_qs_env(qs_env, &
-                      scf_env=scf_env, &
-                      ks_env=ks_env, &
-                      mos=mo_array, &
-                      rho=rho, &
-                      pw_env=pw_env, &
-                      input=input, &
-                      admm_env=admm_env, &
-                      para_env=para_env, &
-                      blacs_env=blacs_env, &
-                      energy=energy)
-      CALL qs_rho_get(rho, rho_pol=rho_pol)
-
-      CALL pw_env_get(pw_env, xc_pw_pool=xc_pw_pool, &
-                        auxbas_pw_pool=auxbas_pw_pool, &
-                        poisson_env = poisson_env)
-
-      ! we have two spins
-      CPASSERT(SIZE(mo_array, 1) == 2)
-      ! we want uniform occupations
-      CALL get_mo_set(mo_set=mo_array(1)%mo_set, uniform_occupation=uniform_occupation)
-      CPASSERT(uniform_occupation)
-      !CALL get_mo_set(mo_set=mo_array(2)%mo_set, mo_coeff=mo_coeff, uniform_occupation=uniform_occupation)
-      CALL get_mo_set(mo_set=mo_array(2)%mo_set, uniform_occupation=uniform_occupation) ! Giorgio
-      CPASSERT(uniform_occupation)
-
-      k_alpha = 0; k_beta = 0
-         
-      ! we have two spins
-      CPASSERT(SIZE(mo_array, 1) == 2)
-      ! Find k_alpha and k_beta as the number of electrons in each channel
-      CALL get_mo_set(mo_set=mo_array(1)%mo_set, mo_coeff=mo_coeff,&
-                                 nelectron=k_alpha)
-
-      CALL get_mo_set(mo_set=mo_array(2)%mo_set, mo_coeff=mo_coeff,&
-                                 nelectron=k_beta)
-
-      Norb = k_alpha - k_beta
-      ! Check that we have just one unpaired orbital
-      CPASSERT(Norb == 1)  
-      sig = 1 + (1+sgn)/2 ! Polaron spin channel
-      mu = 3 - sig ! The other spin channel
-      iorb = 1 !k_beta + 1
-!-------------------------------------------------------------------------------! 
-      ! Dummy instructions to avoid 'Werror-unused-dummy-argument':
-!      IF (just_energy) THEN
-!            ! Nothing
-!      END IF
-      total_rho = 0.0
-      nmo = 0
-      n =0 
-      IF (   ASSOCIATED(poisson_env)  ) THEN
-            ! Notning
-      END IF
-      NULLIFY(pol_r, pol_g)
-!-------------------------------------------------------------------------------!
-      
-      ! prepare polaron density pointers
-      CALL qs_rho_get(rho, pol_r=pol_r, pol_g=pol_g)
-      CALL pw_zero(pol_r(sig)%pw)
-      CALL pw_zero(pol_g(sig)%pw)      
-      CALL pw_zero(pol_r(mu)%pw)
-      CALL pw_zero(pol_g(mu)%pw)      
-
-      CALL dbcsr_set(rho_pol(sig)%matrix, 0.0_dp)
-      CALL dbcsr_set(rho_pol(mu)%matrix, 0.0_dp)
-
-      ! create fm matrix template based on mo_coeff with just 1 column
-      CALL get_mo_set(mo_set=mo_array(sig)%mo_set, mo_coeff=mo_coeff)
-      CALL cp_fm_struct_create(fm_struct_tmp, ncol_global=1, &
-                               template_fmstruct=mo_coeff%matrix_struct)
-!      CALL cp_fm_struct_create(fm_struct_tmp, para_env=para_env, context=blacs_env, &
-!                                  nrow_global=n, ncol_global=1)
-      ! Create matrix_v
-      CALL cp_fm_create(matrix_v, fm_struct_tmp, name="matrix_v")
-      CALL cp_fm_struct_release(fm_struct_tmp)
-
-      ! extract the proper orbital from the mo_coeff
-      ! cp_fm_to_fm_columns(msource, mtarget, ncol, source_start, target_start)   
-      CALL cp_fm_to_fm(unoccupied_orbs(sig)%matrix, matrix_v, 1, 1, 1) ! copy just the selected orb
-
-      ! construct the density matrix and the corresponding density
-      CALL cp_dbcsr_plus_fm_fm_t(rho_pol(sig)%matrix, matrix_v=matrix_v, ncol=1, &
-                                   alpha=1.0_dp) ! it does mat_v*mat_v^T and
-
-      ! set the polaron density in the environment
-      CALL qs_rho_set(rho, rho_pol=rho_pol)
-      
-      ! cleanup  
-      CALL cp_fm_release(matrix_v)
-
-!------------------------------------------------------------------------------------!
-
-      ! compute polaron density
-      CALL calculate_rho_elec(matrix_p=rho_pol(sig)%matrix, &
-                              rho=pol_r(sig), rho_gspace=pol_g(sig), total_rho=total_rho, &
-                               ks_env=ks_env) ! now we have the orbital density
-
-      ! set the polaron density in the environment
-      CALL qs_rho_set(rho, pol_r=pol_r, pol_g=pol_g)
-      
-      CALL pw_pool_create_pw(auxbas_pw_pool, work_v_gspace%pw, &  ! work_v_gspace
-                             use_data=COMPLEXDATA1D, &
-                             in_space=RECIPROCALSPACE)
-     
-      ! compute the energy functional for this orbital
-      CALL pw_poisson_solve(poisson_env, pol_g(sig)%pw, ener, work_v_gspace%pw)
-      energy%pol_ehartree = ener
-      CALL cp_fm_get_info(unoccupied_orbs(sig)%matrix, ncol_global=nmo, nrow_global=n)
-
-      IF(output_unit > 0) THEN     
-            WRITE(output_unit,*) ""
-            WRITE(output_unit,*) "sic_fp_get_pol_density_post_gpw: polaron hartree energy [eV]:"
-            WRITE(output_unit, '("          ",f16.8)') energy%pol_ehartree*evolt
-            WRITE(output_unit,*) ""
-      END IF
-      CALL pw_pool_give_back_pw(xc_pw_pool, work_v_gspace%pw)
-!-------------------------------------------------------------------------------------!
-      CALL timestop(handle)
-   END SUBROUTINE sic_fp_get_pol_density_post_gpw
-
-! **************************************************************************************************
-!> \brief do sic calculations on explicit orbitals
-!> \param energy ...
-!> \param qs_env ...
-!> \param dft_control ...
-!> \param poisson_env ...
-!> \param just_energy ...
-! **************************************************************************************************
-   SUBROUTINE sic_fp_get_pol_density(qs_env, dft_control)
-
-      TYPE(qs_energy_type), POINTER                      :: energy
-      TYPE(qs_environment_type), POINTER                 :: qs_env
-      TYPE(qs_scf_env_type), POINTER                     :: scf_env
-      TYPE(dft_control_type), POINTER                    :: dft_control
-      TYPE(pw_poisson_type), POINTER                     :: poisson_env
-      TYPE(pw_pool_type), POINTER                        :: auxbas_pw_pool
-
-      CHARACTER(*), PARAMETER :: routineN = 'sic_fp_get_pol_density'
-
-      INTEGER                                            :: handle, i, Iorb, k_alpha, k_beta, Norb, &
-                                                            charge, sgn, sig, mu, ispin, nmo,n, output_unit
-      LOGICAL                                            :: uniform_occupation
-      REAL(KIND=dp)                                      :: ener, exc, exc_a, exc_b, total_rho
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mo_derivs_local
-      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_tmp
-      TYPE(cp_fm_type), POINTER                          :: matrix_v, mo_coeff
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: mo_derivs, rho_ao, rho_pol, p_mix_new_pol
-      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mo_array
-      TYPE(pw_env_type), POINTER                         :: pw_env
-      TYPE(pw_p_type), DIMENSION(:), POINTER             :: pol_g, pol_r, tau, vxc_a, vxc_tau, &
-                                                            my_rho_r, my_rho_g, vxc_b
-      
-      TYPE(pw_pool_type), POINTER                        :: xc_pw_pool
-      TYPE(qs_ks_env_type), POINTER                      :: ks_env
-      TYPE(qs_rho_type), POINTER                         :: rho
-      TYPE(section_vals_type), POINTER                   :: input, xc_section
-
-      TYPE(cp_logger_type), POINTER                      :: logger
-      logger => cp_get_default_logger()
-      IF (.NOT. dft_control%do_sic_fp) RETURN
-      charge=dft_control%charge
-      sgn = -1
-      IF (charge .GT.0) sgn = 1
-      output_unit = cp_logger_get_default_io_unit(logger)
-!     IF(output_unit>0) WRITE(*,*) '     calculate rho_p' 
-      CALL timeset(routineN, handle)
-
-      NULLIFY (tau, vxc_tau, mo_derivs, ks_env, rho_ao, rho_pol)
-
-      ! generate the lists of orbitals that need sic treatment
-      CALL get_qs_env(qs_env, &
-                      scf_env=scf_env, &
-                      ks_env=ks_env, &
-                      mo_derivs=mo_derivs, &
-                      mos=mo_array, &
-                      rho=rho, &
-                      pw_env=pw_env, &
-                      input=input, &
-                      energy=energy)
-
-      CALL qs_rho_get(rho, rho_ao=rho_ao, rho_pol=rho_pol)
-      p_mix_new_pol => scf_env%p_mix_new_pol
-      xc_section => section_vals_get_subs_vals(input, "DFT%XC")
-      
-      
-      DO i = 1, SIZE(mo_array) !fm->dbcsr
-         IF (mo_array(i)%mo_set%use_mo_coeff_b) THEN !fm->dbcsr
-            CALL copy_dbcsr_to_fm(mo_array(i)%mo_set%mo_coeff_b, &
-                                  mo_array(i)%mo_set%mo_coeff) !fm->dbcsr
-         ENDIF !fm->dbcsr
-      ENDDO !fm->dbcsr
-
-      CALL pw_env_get(pw_env, xc_pw_pool=xc_pw_pool, &
-                        auxbas_pw_pool=auxbas_pw_pool, &
-                        poisson_env = poisson_env)
-
-      ! we have two spins
-      CPASSERT(SIZE(mo_array, 1) == 2)
-      ! we want uniform occupations
-      CALL get_mo_set(mo_set=mo_array(1)%mo_set, uniform_occupation=uniform_occupation)
-      CPASSERT(uniform_occupation)
-      !CALL get_mo_set(mo_set=mo_array(2)%mo_set, mo_coeff=mo_coeff, uniform_occupation=uniform_occupation)
-      CALL get_mo_set(mo_set=mo_array(2)%mo_set, uniform_occupation=uniform_occupation) ! Giorgio
-      CPASSERT(uniform_occupation)
-
-      k_alpha = 0; k_beta = 0
-         
-      ! we have two spins
-      CPASSERT(SIZE(mo_array, 1) == 2)
-      ! Find k_alpha and k_beta as the number of electrons in each channel
-      CALL get_mo_set(mo_set=mo_array(1)%mo_set, mo_coeff=mo_coeff,&
-                                 nelectron=k_alpha)
-
-      CALL get_mo_set(mo_set=mo_array(2)%mo_set, mo_coeff=mo_coeff,&
-                                 nelectron=k_beta)
-
-      Norb = k_alpha - k_beta
-      ! Check that we have just one unpaired orbital
-      CPASSERT(Norb == 1)  
-      sig = 1 + (1+sgn)/2 ! Polaron spin channel
-      mu = 3 - sig ! The other spin channel
-      iorb = k_beta + 1
-!-------------------------------------------------------------------------------! 
-      ! Dummy instructions to avoid 'Werror-unused-dummy-argument':
-!      IF (just_energy) THEN
-!            ! Nothing
-!      END IF
-      ener =0.0
-      exc= 0.0
-      total_rho = 0.0
-      exc_a = 0.0
-      exc_b = 0.0
-      ispin = 0 
-      nmo = 0
-      n =0 
-      IF (ASSOCIATED(fm_struct_tmp) .AND. &
-            ASSOCIATED(mo_derivs_local) .AND. ASSOCIATED(poisson_env) .AND.  & 
-             ASSOCIATED(matrix_v)) THEN
-            ! Notning
-      END IF
-      NULLIFY(pol_r, pol_g,my_rho_g, my_rho_r,vxc_a, vxc_b)
-!-------------------------------------------------------------------------------!
-      
-      ! prepare polaron density pointers
-      CALL qs_rho_get(rho, pol_r=pol_r, pol_g=pol_g)
-      CALL pw_zero(pol_r(sig)%pw)
-      CALL pw_zero(pol_g(sig)%pw)      
-      CALL pw_zero(pol_r(mu)%pw)
-      CALL pw_zero(pol_g(mu)%pw)      
-
-      ! create fm matrix template based on mo_coeff with just 1 column
-      CALL get_mo_set(mo_set=mo_array(sig)%mo_set, mo_coeff=mo_coeff)
-      CALL cp_fm_struct_create(fm_struct_tmp, ncol_global=1, &
-                               template_fmstruct=mo_coeff%matrix_struct)
-      ! Create matrix_v
-      CALL cp_fm_create(matrix_v, fm_struct_tmp, name="matrix_v")
-      CALL cp_fm_struct_release(fm_struct_tmp)
-
-      ! extract the proper orbital from the mo_coeff
-      ! cp_fm_to_fm_columns(msource, mtarget, ncol, source_start, target_start)   
-      CALL cp_fm_to_fm(mo_coeff, matrix_v, 1, iorb, 1) ! copy just the selected orb
-      SELECT CASE (scf_env%mixing_method)
-
-      CASE (direct_mixing_nr) ! Direct mixing
-            CALL dbcsr_set(scf_env%p_mix_new_pol(sig)%matrix, 0.0_dp)
-            ! construct the density matrix and the corresponding density
-            CALL cp_dbcsr_plus_fm_fm_t(scf_env%p_mix_new_pol(sig)%matrix, matrix_v=matrix_v, ncol=1, &
-                                         alpha=1.0_dp) ! it does mat_v*mat_v^T and
-            ! set the polaron density in the environment
-            CALL qs_rho_set(rho, rho_pol_valid=.TRUE.)
-
-      CASE (no_mixing_nr) ! This works with OT
-            CALL dbcsr_set(rho_pol(sig)%matrix, 0.0_dp)
-            ! construct the density matrix and the corresponding density
-            CALL cp_dbcsr_plus_fm_fm_t(rho_pol(sig)%matrix, matrix_v=matrix_v, ncol=1, &
-                                         alpha=1.0_dp) ! it does mat_v*mat_v^T and
-      
-            ! set the polaron density in the environment
-            CALL qs_rho_set(rho,rho_pol_valid=.TRUE.)
-
-      CASE DEFAULT
-            CPABORT('SIC FP: mixing method not supported')
-
-      END SELECT
-      
-      ! cleanup  
-      CALL cp_fm_release(matrix_v)
-
-!------------------------------------------------------------------------------------!
-
-!      ! compute polaron density
-!      CALL calculate_rho_elec(matrix_p=scf_env%p_mix_new_pol(sig)%matrix, &
-!                              rho=pol_r(sig), rho_gspace=pol_g(sig), total_rho=total_rho, &
-!                               ks_env=ks_env) ! now we have the orbital density
-!
-!      ! set the polaron density in the environment
-!      CALL qs_rho_set(rho, pol_r=pol_r, pol_g=pol_g, rho_pol=rho_pol)
-     
-!-------------------------------------------------------------------------------------!
- 
-      CALL timestop(handle)
-   END SUBROUTINE sic_fp_get_pol_density
-
 
 ! **************************************************************************************************
 !> \brief do sic calculations on explicit orbitals
@@ -774,97 +394,62 @@ CONTAINS
 !> \param calculate_forces ...
 !> \param auxbas_pw_pool ...
 ! **************************************************************************************************
-   SUBROUTINE sic_fp_calc_xc_correction(qs_env, dft_control, vxc_rho, just_energy, auxbas_pw_pool)
+   SUBROUTINE sic_fp_orbitals(energy, qs_env, dft_control, poisson_env, just_energy, &
+                                    calculate_forces, auxbas_pw_pool)
 
       TYPE(qs_energy_type), POINTER                      :: energy
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(dft_control_type), POINTER                    :: dft_control
-      TYPE(pw_p_type), DIMENSION(:), POINTER             :: vxc_rho
       TYPE(pw_poisson_type), POINTER                     :: poisson_env
-      LOGICAL, INTENT(IN)                                :: just_energy
+      LOGICAL, INTENT(IN)                                :: just_energy, calculate_forces
       TYPE(pw_pool_type), POINTER                        :: auxbas_pw_pool
-      TYPE(qs_scf_env_type), POINTER                     :: scf_env
 
-      CHARACTER(*), PARAMETER :: routineN = 'sic_fp_calc_xc_correction'
+      CHARACTER(*), PARAMETER :: routineN = 'sic_fp_orbitals'
 
-      INTEGER                                            :: handle, i, Iorb, k_alpha, k_beta, Norb, &
-                                                            charge, sgn, sig, mu, ispin,output_unit
-      LOGICAL                                            :: compute_virial, uniform_occupation, &
-                                                            do_calc_xc_correction, rho_pol_valid
-      REAL(KIND=dp)                                      :: ener, exc, exc_a, exc_b, total_rho, correction
+      INTEGER                                            :: handle, i, Iorb, k_alpha, k_beta, Norb
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: sic_orbital_list
+      LOGICAL                                            :: compute_virial, uniform_occupation
+      REAL(KIND=dp)                                      :: ener, exc, total_rho
       REAL(KIND=dp), DIMENSION(3, 3)                     :: virial_xc_tmp
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mo_derivs_local
       TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_tmp
       TYPE(cp_fm_type), POINTER                          :: matrix_hv, matrix_v, mo_coeff
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: mo_derivs, rho_pol
-      TYPE(dbcsr_p_type), POINTER                        :: rho_ao_local_p
-      TYPE(dbcsr_type), POINTER                          :: rho_ao_local
+      TYPE(dbcsr_p_type)                                 :: orb_density_matrix_p, orb_h_p
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: mo_derivs, rho_ao, tmp_dbcsr
+      TYPE(dbcsr_type), POINTER                          :: orb_density_matrix, orb_h
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mo_array
       TYPE(pw_env_type), POINTER                         :: pw_env
-      TYPE(pw_p_type)                                    :: work_v_gspace, work_r_up, &
-                                                            work_r_dwn, work_g_up, work_g_dwn, &
-                                                            orb_rho_r, orb_rho_g
-      TYPE(pw_p_type), DIMENSION(:), POINTER             :: pol_g, pol_r, tau, vxc_a, vxc_tau, &
-                                                            my_rho_r, my_rho_g, vxc_b, &
-                                                            work_rho_r, work_rho_g
-
+      TYPE(pw_p_type)                                    :: orb_rho_g, orb_rho_r, tmp_g, tmp_r, &
+                                                            work_v_gspace, work_v_rspace
+      TYPE(pw_p_type), DIMENSION(:), POINTER             :: rho_g, rho_r, tau, vxc, vxc_tau
       TYPE(pw_pool_type), POINTER                        :: xc_pw_pool
       TYPE(qs_ks_env_type), POINTER                      :: ks_env
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(section_vals_type), POINTER                   :: input, xc_section
       TYPE(virial_type), POINTER                         :: virial
 
-      TYPE(cp_logger_type), POINTER                      :: logger
+      IF (dft_control%sic_method_id .NE. sic_fp) RETURN
 
       CALL timeset(routineN, handle)
 
-      logger => cp_get_default_logger()
-      output_unit = cp_logger_get_default_io_unit(logger)
+      NULLIFY (tau, vxc_tau, mo_derivs, ks_env, rho_ao)
 
-      IF (.NOT. dft_control%do_sic_fp) THEN ! Giorgio
-            CALL timestop(handle)
-            RETURN
-      END IF
-
-      NULLIFY (tau, vxc_tau, mo_derivs, ks_env)
-      ! Retrieve variables
+      ! generate the lists of orbitals that need sic treatment
       CALL get_qs_env(qs_env, &
                       ks_env=ks_env, &
-                      pw_env=pw_env, &
-                      scf_env=scf_env, &
                       mo_derivs=mo_derivs, &
                       mos=mo_array, &
                       rho=rho, &
-                      energy=energy, &
+                      pw_env=pw_env, &
                       input=input, &
                       cell=cell, &
                       virial=virial)
-      CALL pw_env_get(pw_env,poisson_env=poisson_env)
-      CALL qs_rho_get(rho, rho_pol_valid=rho_pol_valid )
+      CALL qs_rho_get(rho, rho_ao=rho_ao)
 
-      ! Check if xc correction has to be applied
-      do_calc_xc_correction = dft_control%do_sic_fp
-      do_calc_xc_correction= do_calc_xc_correction .AND. rho_pol_valid
- !     do_calc_xc_correction= do_calc_xc_correction .AND. just_energy
-      do_calc_xc_correction= do_calc_xc_correction .AND. ASSOCIATED(qs_env)
-      
-      IF (.NOT. do_calc_xc_correction) THEN ! Giorgio
-            IF(output_unit>0) WRITE(*,*) '                              skip v_gamma: ', scf_env%iter_count, just_energy 
-            IF(output_unit>0) WRITE(*,*) '                              do_sic_fp, rho_pol_valid,ASSOCIATED(qs_env): ', &
-                                                dft_control%do_sic_fp, rho_pol_valid,ASSOCIATED(qs_env) 
-            CALL timestop(handle)
-            RETURN
-      END IF
-
-      charge=dft_control%charge
-      sgn = -1
-      IF (charge .GT.0) sgn = 1
-     
       compute_virial = virial%pv_calculate .AND. (.NOT. virial%pv_numer)
       xc_section => section_vals_get_subs_vals(input, "DFT%XC")
-      
-      
+
       DO i = 1, SIZE(mo_array) !fm->dbcsr
          IF (mo_array(i)%mo_set%use_mo_coeff_b) THEN !fm->dbcsr
             CALL copy_dbcsr_to_fm(mo_array(i)%mo_set%mo_coeff_b, &
@@ -878,314 +463,239 @@ CONTAINS
       CPASSERT(SIZE(mo_array, 1) == 2)
       ! we want uniform occupations
       CALL get_mo_set(mo_set=mo_array(1)%mo_set, uniform_occupation=uniform_occupation)
-      CPASSERT(uniform_occupation)
-      !CALL get_mo_set(mo_set=mo_array(2)%mo_set, mo_coeff=mo_coeff, uniform_occupation=uniform_occupation)
-      CALL get_mo_set(mo_set=mo_array(2)%mo_set, uniform_occupation=uniform_occupation) ! Giorgio
-      CPASSERT(uniform_occupation)
+      ! CPASSERT(uniform_occupation)
+      CALL get_mo_set(mo_set=mo_array(2)%mo_set, mo_coeff=mo_coeff, uniform_occupation=uniform_occupation)
+      ! CPASSERT(uniform_occupation)
+
+      NULLIFY (tmp_dbcsr)
+      CALL dbcsr_allocate_matrix_set(tmp_dbcsr, SIZE(mo_derivs, 1))
+      DO i = 1, SIZE(mo_derivs, 1) !fm->dbcsr
+         !
+         NULLIFY (tmp_dbcsr(i)%matrix)
+         CALL dbcsr_init_p(tmp_dbcsr(i)%matrix)
+         CALL dbcsr_copy(tmp_dbcsr(i)%matrix, mo_derivs(i)%matrix)
+         CALL dbcsr_set(tmp_dbcsr(i)%matrix, 0.0_dp)
+      ENDDO !fm->dbcsr
 
       k_alpha = 0; k_beta = 0
-         
-      ! we have two spins
-      CPASSERT(SIZE(mo_array, 1) == 2)
-      ! Find k_alpha and k_beta as the number of electrons in each channel
-      CALL get_mo_set(mo_set=mo_array(1)%mo_set, mo_coeff=mo_coeff,&
-                                 nelectron=k_alpha)
+      SELECT CASE (dft_control%sic_list_id)
+!      CASE (sic_list_all)
+!
+!         CALL get_mo_set(mo_set=mo_array(1)%mo_set, mo_coeff=mo_coeff)
+!         CALL cp_fm_get_info(mo_coeff, ncol_global=k_alpha)
+!
+!         IF (SIZE(mo_array, 1) > 1) THEN
+!            CALL get_mo_set(mo_set=mo_array(2)%mo_set, mo_coeff=mo_coeff)
+!            CALL cp_fm_get_info(mo_coeff, ncol_global=k_beta)
+!         ENDIF
+!
+!         Norb = k_alpha + k_beta
+!         ALLOCATE (sic_orbital_list(3, Norb))
+!
+!         iorb = 0
+!         DO i = 1, k_alpha
+!            iorb = iorb + 1
+!            sic_orbital_list(1, iorb) = 1
+!            sic_orbital_list(2, iorb) = i
+!            sic_orbital_list(3, iorb) = 1
+!         ENDDO
+!         DO i = 1, k_beta
+!            iorb = iorb + 1
+!            sic_orbital_list(1, iorb) = 2
+!            sic_orbital_list(2, iorb) = i
+!            IF (SIZE(mo_derivs, 1) == 1) THEN
+!               sic_orbital_list(3, iorb) = 1
+!            ELSE
+!               sic_orbital_list(3, iorb) = 2
+!            ENDIF
+!         ENDDO
+!
+      CASE (sic_list_unpaired)
+         ! we have two spins
+         CPASSERT(SIZE(mo_array, 1) == 2)
+         ! we have them restricted
+         ! CPASSERT(dft_control%restricted)
+         ! CPASSERT(SIZE(mo_derivs, 1) == 1)
 
-      CALL get_mo_set(mo_set=mo_array(2)%mo_set, mo_coeff=mo_coeff,&
-                                 nelectron=k_beta)
+         CALL get_mo_set(mo_set=mo_array(1)%mo_set, mo_coeff=mo_coeff)
+         CALL cp_fm_get_info(mo_coeff, ncol_global=k_alpha)
 
-      Norb = k_alpha - k_beta
-      ! Check that we have just one unpaired orbital
-      CPASSERT(Norb == 1)  
-      sig = 1 + (1+sgn)/2 ! Polaron spin channel
-      mu = 3 - sig ! The other spin channel
-      iorb = k_beta + 1
+         CALL get_mo_set(mo_set=mo_array(2)%mo_set, mo_coeff=mo_coeff)
+         CALL cp_fm_get_info(mo_coeff, ncol_global=k_beta)
 
-      CALL pw_pool_create_pw(auxbas_pw_pool, work_v_gspace%pw, &  ! work_v_gspace
-                             use_data=COMPLEXDATA1D, &
-                             in_space=RECIPROCALSPACE)
-     
-!-------------------------------------------------------------------------------! 
-      ! Dummy instructions to avoid 'Werror-unused-dummy-argument':
-      ener =0.0
-      exc= 0.0
-      total_rho = 0.0
-      virial_xc_tmp=0.0
-      ispin = 0
-      IF (ASSOCIATED(fm_struct_tmp) .AND. ASSOCIATED(matrix_hv) .AND. &
-            ASSOCIATED(mo_derivs_local) .AND. ASSOCIATED(poisson_env) .AND.  & 
-            ASSOCIATED(energy) .AND. ASSOCIATED(matrix_v) .AND. ASSOCIATED(vxc_rho)) THEN
-            ! Notning
-      END IF
-      NULLIFY(pol_r, pol_g,my_rho_g, my_rho_r,vxc_a, vxc_b)
-!-------------------------------------------------------------------------------!
-      ! Should be that my_rho contains the total density and rho_r/g the
-      ! polaron density in the sig channel and nothing in the mu
-      ! channel. The following subtracts the polaronic density from the
-      ! sig channel of the total density
+         Norb = k_alpha - k_beta
+         ALLOCATE (sic_orbital_list(3, Norb))
 
-      ! work variables
-
-      CALL pw_pool_create_pw(xc_pw_pool, orb_rho_r%pw, &
-                             use_data=REALDATA3D, &
-                             in_space=REALSPACE)
-      CALL pw_pool_create_pw(xc_pw_pool, orb_rho_g%pw, &
-                             use_data=COMPLEXDATA1D, &
-                             in_space=RECIPROCALSPACE)
-      CALL pw_pool_create_pw(xc_pw_pool, work_r_up%pw, &
-                             use_data=REALDATA3D, &
-                             in_space=REALSPACE)
-      CALL pw_pool_create_pw(xc_pw_pool, work_r_dwn%pw, &
-                             use_data=REALDATA3D, &
-                             in_space=REALSPACE)
-      CALL pw_pool_create_pw(xc_pw_pool, work_g_up%pw, &
-                             use_data=COMPLEXDATA1D, &
-                             in_space=RECIPROCALSPACE)
-      CALL pw_pool_create_pw(xc_pw_pool, work_g_dwn%pw, &
-                             use_data=COMPLEXDATA1D, &
-                             in_space=RECIPROCALSPACE)
-      ALLOCATE(work_rho_r(2), work_rho_g(2))
-      work_rho_r(1)%pw => work_r_up%pw
-      work_rho_r(2)%pw => work_r_dwn%pw
-      work_rho_g(1)%pw => work_g_up%pw
-      work_rho_g(2)%pw => work_g_dwn%pw
-      
-      ! prepare polaron density pointers
-      CALL qs_rho_get(rho, pol_r=pol_r, pol_g=pol_g, rho_pol=rho_pol)
-      CALL pw_zero(pol_r(sig)%pw)
-      CALL pw_zero(pol_g(sig)%pw)      
-      CALL pw_zero(pol_r(mu)%pw)
-      CALL pw_zero(pol_g(mu)%pw)      
-      ! TODO: check that pol_r and pol_g are computed only once per scf run
-      ! compute polaron density
-      CALL calculate_rho_elec(matrix_p=rho_pol(sig)%matrix, &
-                              rho=pol_r(sig), rho_gspace=pol_g(sig), total_rho=total_rho, &
-                               ks_env=ks_env) ! now we have the orbital density
-
-
-      SELECT CASE (scf_env%mixing_method)
-      CASE(direct_mixing_nr)
-
-            CALL qs_rho_get(rho, rho_r=my_rho_r, rho_g=my_rho_g)
-            ! copy the full density
-            ! pw_copy(pw1, pw2) copy pw1 -> pw2
-            DO ispin = 1, dft_control%nspins
-                  CALL pw_copy(my_rho_r(ispin)%pw, work_rho_r(ispin)%pw)
-                  CALL pw_copy(my_rho_g(ispin)%pw, work_rho_g(ispin)%pw) 
-            END DO
-
-      CASE(no_mixing_nr)
-            NULLIFY(rho_ao_local,rho_ao_local_p)
-            ALLOCATE(rho_ao_local,rho_ao_local_p)
-            DO ispin = 1, dft_control%nspins
-                  CALL pw_zero(orb_rho_r%pw)
-                  CALL pw_zero(orb_rho_g%pw)
-                  CALL dbcsr_copy(rho_ao_local,rho_pol(ispin)%matrix,name='rho_ao_local')
-                  CALL dbcsr_set(rho_ao_local,0.0_dp)
-                  
-                  rho_ao_local_p%matrix => rho_ao_local
-                  CALL calculate_density_matrix(mo_array(ispin)%mo_set,rho_ao_local_p%matrix)
-      
-                  CALL calculate_rho_elec(matrix_p=rho_ao_local_p%matrix, &
-                                    rho=orb_rho_r, rho_gspace=orb_rho_g, total_rho=total_rho, &
-                                     ks_env=ks_env) ! now we have the orbital density
-                        ! source, target
-                  CALL pw_copy(orb_rho_r%pw, work_rho_r(ispin)%pw)
-                  CALL pw_copy(orb_rho_g%pw, work_rho_g(ispin)%pw) 
-            END DO
-            CALL dbcsr_deallocate_matrix(rho_ao_local_p%matrix)
+         iorb = 0
+         DO i = k_beta + 1, k_alpha
+            iorb = iorb + 1
+            sic_orbital_list(1, iorb) = 1
+            sic_orbital_list(2, iorb) = i
+            ! we are guaranteed to be restricted
+            sic_orbital_list(3, iorb) = 1
+         ENDDO
 
       CASE DEFAULT
-            CPABORT('SIC FP: mixing method not supported')
+         CPABORT("")
       END SELECT
 
-      ! pw_axpy(mat1, mat2, alpha) mat2 = alpha * mat1 + mat2
-      CALL pw_axpy(pol_r(sig)%pw,work_rho_r(sig)%pw,alpha=DBLE(sgn))
-      CALL pw_axpy(pol_g(sig)%pw,work_rho_g(sig)%pw,alpha=DBLE(sgn))
-     
-      ! Compute vxc_a = Vxc[rho_up-rho_ep, rho_dwn] or Vxc[rho_up, rho_dwn+rho_hp]
-      CPASSERT(.NOT. compute_virial)
-!      IF (just_energy) THEN
-!            exc_a = xc_exc_calc(work_rho_r, work_rho_g, tau, xc_section, xc_pw_pool)
-!      ELSE
-            CALL xc_vxc_pw_create1(vxc_rho=vxc_a, rho_r=work_rho_r, &
-                                   rho_g=work_rho_g, tau=tau, vxc_tau=vxc_tau, exc=exc_a, xc_section=xc_section, &
-                                   pw_pool=xc_pw_pool, compute_virial=compute_virial, virial_xc=virial_xc_tmp)
 
-!     END IF
-      
-      ! Compute vxc_b = Vxc[rho_up, rho_dwn]
-      exc=0.0_dp 
-
-      ! restore total density
-      CALL pw_axpy(pol_r(sig)%pw,work_rho_r(sig)%pw,alpha=DBLE(-sgn))
-      CALL pw_axpy(pol_g(sig)%pw,work_rho_g(sig)%pw,alpha=DBLE(-sgn))
-!      IF (just_energy) THEN
-!            exc_b = xc_exc_calc(work_rho_r, work_rho_g, tau, xc_section, xc_pw_pool)
-!      ELSE 
-            CALL xc_vxc_pw_create1(vxc_rho=vxc_b, rho_r=work_rho_r, &
-                             rho_g=work_rho_g, tau=tau, vxc_tau=vxc_tau, exc=exc_b, xc_section=xc_section, &
-                             pw_pool=xc_pw_pool, compute_virial=compute_virial, virial_xc=virial_xc_tmp)
-!      END IF
-
-!                  Old version, working with pmix
-!      energy%exc = energy%exc + dft_control%sic_gamma * (exc_b - exc_a)
-
-!      IF (.NOT. just_energy) THEN
-      !  Vxc = Vxc + gamma*(vxc_b - vxc_a)
-            DO ispin = 1, dft_control%nspins
-
-!                  Old version, working with pmix
-!                  vxc_rho(ispin)%pw%cr3d = vxc_rho(ispin)%pw%cr3d +dft_control%sic_gamma* &
-!                                          (vxc_b(ispin)%pw%cr3d -vxc_a(ispin)%pw%cr3d)
-
-                  ! Compute vgamma, store into vxc_b
-                  CALL pw_axpy(vxc_a(ispin)%pw, vxc_b(ispin)%pw, -1.0_dp)
-IF (.NOT. just_energy) THEN
-                  ! Add to vxc
-                  ! pw2 = alpha*pw1 + pw2
-                 ! CALL pw_axpy(vxc_b(ispin)%pw, vxc_rho(ispin)%pw, 1.0_dp)
-                  CALL pw_axpy(vxc_b(ispin)%pw, vxc_rho(ispin)%pw, 0.0_dp)  
-END IF
-
-            ENDDO
-                  correction=-0.5*charge*dft_control%sic_gamma * &
-                                    pw_integral_ab(vxc_b(sig)%pw,pol_r(sig)%pw)
-                  energy%exc = energy%exc + 0.0*correction
-!      END IF
-      
-     IF(output_unit>0) THEN
- !           WRITE(*,*) '                       qs_ks_utils: ', just_energy
-             WRITE(*,*) '     iter, just_energy, correction, old correction:', scf_env%iter_count, just_energy, correction*evolt
-      ENDIF
-
-      ! need to deallocate vxc
-      IF (.NOT. just_energy) THEN
-            CALL pw_pool_give_back_pw(xc_pw_pool, vxc_a(1)%pw)
-            CALL pw_pool_give_back_pw(xc_pw_pool, vxc_a(2)%pw)
-            DEALLOCATE (vxc_a)
-            CALL pw_pool_give_back_pw(xc_pw_pool, vxc_b(1)%pw)
-            CALL pw_pool_give_back_pw(xc_pw_pool, vxc_b(2)%pw)
-      DEALLOCATE (vxc_b)
-      END IF
-      CALL pw_pool_give_back_pw(xc_pw_pool, orb_rho_r%pw)
-      CALL pw_pool_give_back_pw(xc_pw_pool, orb_rho_g%pw)
-      CALL pw_pool_give_back_pw(xc_pw_pool, work_v_gspace%pw)
-      CALL pw_pool_give_back_pw(xc_pw_pool, work_r_up%pw)
-      CALL pw_pool_give_back_pw(xc_pw_pool, work_r_dwn%pw)
-      CALL pw_pool_give_back_pw(xc_pw_pool, work_g_up%pw)
-      CALL pw_pool_give_back_pw(xc_pw_pool, work_g_dwn%pw)
-
-
-      CALL timestop(handle)
-   END SUBROUTINE sic_fp_calc_xc_correction
-
-
-! **************************************************************************************************
-!> \brief do sic calculations on explicit orbitals
-!> \param energy ...
-!> \param qs_env ...
-!> \param dft_control ...
-!> \param poisson_env ...
-!> \param just_energy ...
-!> \param calculate_forces ...
-!> \param auxbas_pw_pool ...
-! **************************************************************************************************
-   SUBROUTINE sic_fp_compute_pol_ehartree(qs_env, dft_control)
-
-      TYPE(qs_energy_type), POINTER                      :: energy
-      TYPE(qs_environment_type), POINTER                 :: qs_env
-      TYPE(dft_control_type), POINTER                    :: dft_control
-      TYPE(pw_poisson_type), POINTER                     :: poisson_env
-      TYPE(pw_pool_type), POINTER                        :: auxbas_pw_pool
-      TYPE(qs_scf_env_type), POINTER                     :: scf_env
-
-      CHARACTER(*), PARAMETER :: routineN = 'sic_fp_compute_pol_ehartree'
-
-      INTEGER                                            :: handle, Iorb, k_alpha, k_beta, Norb, &
-                                                            charge, sgn, sig, mu, output_unit
-
-      REAL(KIND=dp)                                      :: ener, total_rho
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          ::  rho_pol
-      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mo_array
-      TYPE(pw_env_type), POINTER                         :: pw_env
-      TYPE(pw_p_type)                                    :: work_v_gspace
-      TYPE(pw_p_type), DIMENSION(:), POINTER             :: pol_g, pol_r
-
-      TYPE(pw_pool_type), POINTER                        :: xc_pw_pool
-      TYPE(qs_ks_env_type), POINTER                      :: ks_env
-      TYPE(qs_rho_type), POINTER                         :: rho
-
-      TYPE(cp_logger_type), POINTER                      :: logger
-      
-      logger => cp_get_default_logger()
-      
-      output_unit = cp_logger_get_default_io_unit(logger)
-
-      charge=dft_control%charge
-      sgn = -1
-      IF (charge .GT.0) sgn = 1
- 
-      CALL timeset(routineN, handle)
-      IF (.NOT. dft_control%do_sic_fp) THEN
-            CALL timestop(handle)
-            RETURN
-      END IF
-      NULLIFY ( ks_env)
-     
-      ! generate the lists of orbitals that need sic treatment
-      CALL get_qs_env(qs_env, &
-                      ks_env=ks_env, &
-                      pw_env=pw_env, &
-                      scf_env=scf_env, &
-                      mos=mo_array, &
-                      rho=rho, &
-                      energy=energy) 
-
-      CALL pw_env_get(pw_env,poisson_env=poisson_env)
-
-      CALL pw_env_get(pw_env, xc_pw_pool=xc_pw_pool,auxbas_pw_pool=auxbas_pw_pool)
-
-      k_alpha = 0; k_beta = 0
-         
-      ! we have two spins
-      CPASSERT(SIZE(mo_array, 1) == 2)
-      ! Find k_alpha and k_beta as the number of electrons in each channel
-      CALL get_mo_set(mo_set=mo_array(1)%mo_set, nelectron=k_alpha)
-
-      CALL get_mo_set(mo_set=mo_array(2)%mo_set, nelectron=k_beta)
-
-      Norb = k_alpha - k_beta
-      sig = 1 + (1+sgn)/2 ! Polaron spin channel
-      mu = 3 - sig ! The other spin channel
-      iorb = k_beta + 1
-
-      CALL pw_pool_create_pw(auxbas_pw_pool, work_v_gspace%pw, &  ! work_v_gspace
+      ! data needed for each of the orbs
+      CALL pw_pool_create_pw(auxbas_pw_pool, orb_rho_r%pw, &
+                             use_data=REALDATA3D, &
+                             in_space=REALSPACE)
+      CALL pw_pool_create_pw(auxbas_pw_pool, tmp_r%pw, &
+                             use_data=REALDATA3D, &
+                             in_space=REALSPACE)
+      CALL pw_pool_create_pw(auxbas_pw_pool, orb_rho_g%pw, &
                              use_data=COMPLEXDATA1D, &
                              in_space=RECIPROCALSPACE)
-     
-      ! prepare polaron density pointers
-      CALL qs_rho_get(rho, pol_r=pol_r, pol_g=pol_g, rho_pol=rho_pol)
-      CALL pw_zero(pol_r(sig)%pw)
-      CALL pw_zero(pol_g(sig)%pw)      
-      CALL pw_zero(pol_r(mu)%pw)
-      CALL pw_zero(pol_g(mu)%pw)      
+      CALL pw_pool_create_pw(auxbas_pw_pool, tmp_g%pw, &
+                             use_data=COMPLEXDATA1D, &
+                             in_space=RECIPROCALSPACE)
+      CALL pw_pool_create_pw(auxbas_pw_pool, work_v_gspace%pw, &
+                             use_data=COMPLEXDATA1D, &
+                             in_space=RECIPROCALSPACE)
+      CALL pw_pool_create_pw(auxbas_pw_pool, work_v_rspace%pw, &
+                             use_data=REALDATA3D, &
+                             in_space=REALSPACE)
 
-      total_rho=0.0_dp !to remove if the following is removed
-      ! compute polaron density
-      CALL calculate_rho_elec(matrix_p=rho_pol(sig)%matrix, & !rho_pol(sig)
-                              rho=pol_r(sig), rho_gspace=pol_g(sig), total_rho=total_rho, &
-                               ks_env=ks_env) ! now we have the orbital density
+      ALLOCATE (orb_density_matrix)
+      CALL dbcsr_copy(orb_density_matrix, rho_ao(1)%matrix, &
+                      name="orb_density_matrix")
+      CALL dbcsr_set(orb_density_matrix, 0.0_dp)
+      orb_density_matrix_p%matrix => orb_density_matrix
 
-      ! compute the energy functional for this orbital
-      CALL pw_poisson_solve(poisson_env, pol_g(sig)%pw, ener, work_v_gspace%pw)
-      energy%pol_ehartree = ener
+      ALLOCATE (orb_h)
+      CALL dbcsr_copy(orb_h, rho_ao(1)%matrix, &
+                      name="orb_density_matrix")
+      CALL dbcsr_set(orb_h, 0.0_dp)
+      orb_h_p%matrix => orb_h
 
+      CALL get_mo_set(mo_set=mo_array(1)%mo_set, mo_coeff=mo_coeff)
+
+      CALL cp_fm_struct_create(fm_struct_tmp, ncol_global=1, &
+                               template_fmstruct=mo_coeff%matrix_struct)
+      CALL cp_fm_create(matrix_v, fm_struct_tmp, name="matrix_v")
+      CALL cp_fm_create(matrix_hv, fm_struct_tmp, name="matrix_hv")
+      CALL cp_fm_struct_release(fm_struct_tmp)
+
+      ALLOCATE (mo_derivs_local(SIZE(mo_array, 1)))
+      DO I = 1, SIZE(mo_array, 1)
+         CALL get_mo_set(mo_set=mo_array(i)%mo_set, mo_coeff=mo_coeff)
+         CALL cp_fm_create(mo_derivs_local(I)%matrix, mo_coeff%matrix_struct)
+      ENDDO
+
+      ALLOCATE (rho_r(2))
+      rho_r(1)%pw => orb_rho_r%pw
+      rho_r(2)%pw => tmp_r%pw
+      CALL pw_zero(tmp_r%pw)
+
+      ALLOCATE (rho_g(2))
+      rho_g(1)%pw => orb_rho_g%pw
+      rho_g(2)%pw => tmp_g%pw
+      CALL pw_zero(tmp_g%pw)
+
+      NULLIFY (vxc)
+      ! ALLOCATE(vxc(2),stat=stat)
+      ! CPPostcondition(stat==0,cp_failure_level,routineP,failure)
+      ! CALL pw_pool_create_pw(xc_pw_pool,vxc(1)%pw,&
+      !         in_space=REALSPACE, use_data=REALDATA3D)
+      ! CALL pw_pool_create_pw(xc_pw_pool,vxc(2)%pw,&
+      !         in_space=REALSPACE, use_data=REALDATA3D)
+
+      ! now apply to SIC correction to each selected orbital
+  WRITE(789,*) 'sic_explicit_orbitals: Norb: ', Norb ! Giorgio
+      DO iorb = 1, Norb
+         ! extract the proper orbital from the mo_coeff
+         CALL get_mo_set(mo_set=mo_array(sic_orbital_list(1, iorb))%mo_set, mo_coeff=mo_coeff)
+         CALL cp_fm_to_fm(mo_coeff, matrix_v, 1, sic_orbital_list(2, iorb), 1)
+
+         ! construct the density matrix and the corresponding density
+         CALL dbcsr_set(orb_density_matrix, 0.0_dp)
+         CALL cp_dbcsr_plus_fm_fm_t(orb_density_matrix, matrix_v=matrix_v, ncol=1, &
+                                    alpha=1.0_dp)
+
+         CALL calculate_rho_elec(matrix_p=orb_density_matrix, &
+                                 rho=orb_rho_r, rho_gspace=orb_rho_g, total_rho=total_rho, &
+                                 ks_env=ks_env)
+
+          write(789,*) 'sic_explici_orbitals: sic_orbital_list: ',sic_orbital_list(1,iorb),&
+                        sic_orbital_list(2,iorb), sic_orbital_list(3,iorb) ! Giorgio
+       !   write(789,*) 'Total orbital rho= ',total_rho ! Giorgio
+
+         ! compute the energy functional for this orbital and its derivative
+
+         CALL pw_poisson_solve(poisson_env, orb_rho_g%pw, ener, work_v_gspace%pw)
+         ! no PBC correction is done here, see "calc_v_sic_rspace" for SIC methods
+         ! with PBC aware corrections
+         energy%hartree = energy%hartree - dft_control%sic_scaling_a*ener
+         IF (.NOT. just_energy) THEN
+            CALL pw_transfer(work_v_gspace%pw, work_v_rspace%pw)
+            CALL pw_scale(work_v_rspace%pw, -dft_control%sic_scaling_a*work_v_rspace%pw%pw_grid%dvol)
+            CALL dbcsr_set(orb_h, 0.0_dp)
+         ENDIF
+
+         IF (just_energy) THEN
+            exc = xc_exc_calc(rho_r=rho_r, rho_g=rho_g, tau=tau, xc_section=xc_section, &
+                              pw_pool=xc_pw_pool)
+         ELSE
+            CPASSERT(.NOT. compute_virial)
+            CALL xc_vxc_pw_create1(vxc_rho=vxc, rho_r=rho_r, &
+                                   rho_g=rho_g, tau=tau, vxc_tau=vxc_tau, exc=exc, xc_section=xc_section, &
+                                   pw_pool=xc_pw_pool, compute_virial=compute_virial, virial_xc=virial_xc_tmp)
+            ! add to the existing work_v_rspace
+            work_v_rspace%pw%cr3d = work_v_rspace%pw%cr3d- &
+                                    dft_control%sic_scaling_b*vxc(1)%pw%pw_grid%dvol*vxc(1)%pw%cr3d
+         END IF
+         energy%exc = energy%exc - dft_control%sic_scaling_b*exc
+
+         IF (.NOT. just_energy) THEN
+            ! note, orb_h (which is being pointed to with orb_h_p) is zeroed above
+            CALL integrate_v_rspace(v_rspace=work_v_rspace, pmat=orb_density_matrix_p, hmat=orb_h_p, &
+                                    qs_env=qs_env, calculate_forces=calculate_forces)
+
+            ! add this to the mo_derivs
+            CALL cp_dbcsr_sm_fm_multiply(orb_h, matrix_v, matrix_hv, 1)
+            ! silly trick, copy to an array of the right size and add to mo_derivs
+            CALL cp_fm_set_all(mo_derivs_local(sic_orbital_list(3, iorb))%matrix, 0.0_dp)
+            CALL cp_fm_to_fm(matrix_hv, mo_derivs_local(sic_orbital_list(3, iorb))%matrix, 1, 1, sic_orbital_list(2, iorb))
+            CALL copy_fm_to_dbcsr(mo_derivs_local(sic_orbital_list(3, iorb))%matrix, &
+                                  tmp_dbcsr(sic_orbital_list(3, iorb))%matrix)
+            CALL dbcsr_add(mo_derivs(sic_orbital_list(3, iorb))%matrix, &
+                           tmp_dbcsr(sic_orbital_list(3, iorb))%matrix, 1.0_dp, 1.0_dp)
+            !
+            ! need to deallocate vxc
+            CALL pw_pool_give_back_pw(xc_pw_pool, vxc(1)%pw)
+            CALL pw_pool_give_back_pw(xc_pw_pool, vxc(2)%pw)
+            DEALLOCATE (vxc)
+
+         ENDIF
+
+      ENDDO
+
+      CALL pw_pool_give_back_pw(auxbas_pw_pool, orb_rho_r%pw)
+      CALL pw_pool_give_back_pw(auxbas_pw_pool, tmp_r%pw)
+      CALL pw_pool_give_back_pw(auxbas_pw_pool, orb_rho_g%pw)
+      CALL pw_pool_give_back_pw(auxbas_pw_pool, tmp_g%pw)
       CALL pw_pool_give_back_pw(auxbas_pw_pool, work_v_gspace%pw)
+      CALL pw_pool_give_back_pw(auxbas_pw_pool, work_v_rspace%pw)
+
+      CALL dbcsr_deallocate_matrix(orb_density_matrix)
+      CALL dbcsr_deallocate_matrix(orb_h)
+      CALL cp_fm_release(matrix_v)
+      CALL cp_fm_release(matrix_hv)
+      DO I = 1, SIZE(mo_derivs_local, 1)
+         CALL cp_fm_release(mo_derivs_local(I)%matrix)
+      ENDDO
+      DEALLOCATE (mo_derivs_local)
+      DEALLOCATE (rho_r)
+      DEALLOCATE (rho_g)
+
+      CALL dbcsr_deallocate_matrix_set(tmp_dbcsr) !fm->dbcsr
 
       CALL timestop(handle)
-   END SUBROUTINE sic_fp_compute_pol_ehartree
-
+   END SUBROUTINE sic_fp_orbitals
 
 
 ! **************************************************************************************************
@@ -1410,7 +920,7 @@ END IF
       !         in_space=REALSPACE, use_data=REALDATA3D)
 
       ! now apply to SIC correction to each selected orbital
-      
+  WRITE(789,*) 'sic_explicit_orbitals: Norb: ', Norb ! Giorgio
       DO iorb = 1, Norb
          ! extract the proper orbital from the mo_coeff
          CALL get_mo_set(mo_set=mo_array(sic_orbital_list(1, iorb))%mo_set, mo_coeff=mo_coeff)
@@ -1424,6 +934,10 @@ END IF
          CALL calculate_rho_elec(matrix_p=orb_density_matrix, &
                                  rho=orb_rho_r, rho_gspace=orb_rho_g, total_rho=total_rho, &
                                  ks_env=ks_env)
+
+          write(789,*) 'sic_explici_orbitals: sic_orbital_list: ',sic_orbital_list(1,iorb),&
+                        sic_orbital_list(2,iorb), sic_orbital_list(3,iorb) ! Giorgio
+       !   write(789,*) 'Total orbital rho= ',total_rho ! Giorgio
 
          ! compute the energy functional for this orbital and its derivative
 
