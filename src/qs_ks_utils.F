@@ -1004,7 +1004,7 @@ CONTAINS
       CALL pw_axpy(pol_g(sig)%pw,work_rho_g(sig)%pw,alpha=DBLE(sgn))
      
       ! Compute vxc_a = Vxc[rho_up-rho_ep, rho_dwn] or Vxc[rho_up, rho_dwn+rho_hp]
-      CPASSERT(.NOT. compute_virial)
+      !CPASSERT(.NOT. compute_virial)
 !      IF (just_energy) THEN
 !            exc_a = xc_exc_calc(work_rho_r, work_rho_g, tau, xc_section, xc_pw_pool)
 !      ELSE
