@@ -1,0 +1,31 @@
+# Instructions to compile CP2K @ daint-gpu
+# 2022/04/21
+# G. Palermo
+
+module load daint-gpu
+module load CP2K
+module load cray-fftw
+
+1)Copy arch file from last stable installation
+
+ check the value of $EBROOTLIBXC or $EBROOTSIRIUS, should be like:
+
+/apps/daint/UES/jenkins/7.0.UP03/21.09/daint-gpu/software/SIRIUS/7.3.1-CrayGNU-21.09-cuda-mkl
+
+go into .../software/CP2K/arch-name/arch 
+
+and get the arch file.
+
+2) Provide a valid path for fftw:
+
+run toolchain with 
+
+ ./install_cp2k_toolchain --dry-run
+
+go to ${cp2k_root}/tools/toolchain/install/toolchain.env
+
+and copy the fftw root folder. 
+
+Substitute it into the arch file under the CFLAGS and LIBS related to fftw.
+
+Compile with make.

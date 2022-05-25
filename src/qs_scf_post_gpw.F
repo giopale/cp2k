@@ -569,6 +569,7 @@ CONTAINS
                      nlumo = nmo - homo
                   END IF
                   IF (output_unit > 0) WRITE (output_unit, *) " "
+                  IF (output_unit > 0) WRITE (output_unit, *) " Compute lumos:  ", compute_lumos ! Giorgio
                   IF (output_unit > 0) WRITE (output_unit, *) " Lowest eigenvalues of the unoccupied subspace spin ", ispin
                   IF (output_unit > 0) WRITE (output_unit, *) "---------------------------------------------"
                   IF (output_unit > 0) WRITE (output_unit, '(4(1X,1F16.8))') mo_eigenvalues(homo + 1:homo + nlumo)
@@ -799,6 +800,7 @@ CONTAINS
          NULLIFY (unoccupied_evals(ispin)%array)
          ! Always write eigenvalues
          IF (output_unit > 0) WRITE (output_unit, *) " "
+                  IF (output_unit > 0) WRITE (output_unit, *) " Compute lumos:  T" ! Giorgio
          IF (output_unit > 0) WRITE (output_unit, *) " Lowest Eigenvalues of the unoccupied subspace spin ", ispin
          IF (output_unit > 0) WRITE (output_unit, FMT='(1X,A)') "-----------------------------------------------------"
          CALL get_mo_set(mo_set=mos(ispin)%mo_set, mo_coeff=mo_coeff, homo=homo, nao=nao, nmo=nmo)
@@ -845,7 +847,7 @@ CONTAINS
          END IF
       END DO
 
-       CALL sic_fp_get_pol_density_post_gpw(qs_env, dft_control, unoccupied_orbs)
+     !  CALL sic_fp_get_pol_density_post_gpw(qs_env, dft_control, unoccupied_orbs)    ! Giorgio
       CALL timestop(handle)
 
    END SUBROUTINE make_lumo_gpw
