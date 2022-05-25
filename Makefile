@@ -11,8 +11,8 @@ CP2KHOME     := $(abspath $(shell pwd))
 export CP2KHOME
 endif
 
-ARCH         := local
-export VERSION=ssmp
+ARCH         := local_cuda
+export VERSION=psmp
 
 MAKEFILE     := $(CP2KHOME)/Makefile
 ARCHDIR      := $(CP2KHOME)/arch
