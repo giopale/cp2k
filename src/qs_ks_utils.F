@@ -122,6 +122,9 @@ MODULE qs_ks_utils
    USE qs_ks_types,                     ONLY: get_ks_env,&
                                               qs_ks_env_type
    USE qs_mo_types,                     ONLY: get_mo_set,&
+                                              mo_set_type, &
+                                              allocate_mo_set, &
+                                              init_mo_set, &
                                               mo_set_p_type
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type, &
@@ -600,22 +603,28 @@ CONTAINS
       CHARACTER(*), PARAMETER :: routineN = 'sic_fp_get_pol_density'
 
       INTEGER                                            :: handle, i, Iorb, k_alpha, k_beta, Norb, &
-                                                            charge, sgn, sig, mu, ispin, nmo,n, output_unit
+                                                            charge, sgn, sig, mu, ispin,  output_unit, &
+                                                            nelectron, nmo, nao
+      REAL(KIND=dp)                                      :: flexible_electron_count, maxocc, n_el_f
       LOGICAL                                            :: uniform_occupation
-      REAL(KIND=dp)                                      :: ener, exc, exc_a, exc_b, total_rho
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mo_derivs_local
       TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_tmp
-      TYPE(cp_fm_type), POINTER                          :: matrix_v, mo_coeff
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: mo_derivs, rho_ao, rho_pol, p_mix_new_pol
+      TYPE(cp_fm_type), POINTER                          :: matrix_v, mo_coeff, mo_coeff_tmp
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          ::  rho_pol, p_mix_new_pol
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: ks, s
+      TYPE(dbcsr_type), POINTER                          :: matrix_ks, matrix_s
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mo_array
       TYPE(pw_env_type), POINTER                         :: pw_env
-      TYPE(pw_p_type), DIMENSION(:), POINTER             :: pol_g, pol_r, tau, vxc_a, vxc_tau, &
-                                                            my_rho_r, my_rho_g, vxc_b
+      TYPE(pw_p_type), DIMENSION(:), POINTER             :: pol_g, pol_r 
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: mo_eigenvalues
       
       TYPE(pw_pool_type), POINTER                        :: xc_pw_pool
-      TYPE(qs_ks_env_type), POINTER                      :: ks_env
+      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
+      TYPE(cp_para_env_type), POINTER                    :: para_env
+      TYPE(preconditioner_type), POINTER                 :: local_preconditioner
+      TYPE(mo_set_type), POINTER                         :: mo_set_tmp
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(section_vals_type), POINTER                   :: input, xc_section
+      TYPE(scf_control_type), POINTER                    :: scf_control
 
       TYPE(cp_logger_type), POINTER                      :: logger
       logger => cp_get_default_logger()
@@ -624,23 +633,28 @@ CONTAINS
       sgn = -1
       IF (charge .GT.0) sgn = 1
       output_unit = cp_logger_get_default_io_unit(logger)
-!     IF(output_unit>0) WRITE(*,*) '     calculate rho_p' 
+     IF(output_unit>0) WRITE(output_unit,*) '     calculate rho_p' 
       CALL timeset(routineN, handle)
 
-      NULLIFY (tau, vxc_tau, mo_derivs, ks_env, rho_ao, rho_pol)
+      NULLIFY ( rho_pol)
+      NULLIFY (fm_struct_tmp)
+      NULLIFY (mo_coeff)
+      NULLIFY (mo_coeff_tmp)
+      NULLIFY (mo_set_tmp)
 
-      ! generate the lists of orbitals that need sic treatment
       CALL get_qs_env(qs_env, &
                       scf_env=scf_env, &
-                      ks_env=ks_env, &
-                      mo_derivs=mo_derivs, &
                       mos=mo_array, &
+                      matrix_ks = ks, &
+                      blacs_env = blacs_env, &
+                      para_env = para_env, &
+                      matrix_s = s, &
                       rho=rho, &
                       pw_env=pw_env, &
                       input=input, &
-                      energy=energy)
+                      energy=energy,&
+                      scf_control=scf_control)
 
-      CALL qs_rho_get(rho, rho_ao=rho_ao, rho_pol=rho_pol)
       p_mix_new_pol => scf_env%p_mix_new_pol
       xc_section => section_vals_get_subs_vals(input, "DFT%XC")
       
@@ -661,7 +675,6 @@ CONTAINS
       ! we want uniform occupations
       CALL get_mo_set(mo_set=mo_array(1)%mo_set, uniform_occupation=uniform_occupation)
       CPASSERT(uniform_occupation)
-      !CALL get_mo_set(mo_set=mo_array(2)%mo_set, mo_coeff=mo_coeff, uniform_occupation=uniform_occupation)
       CALL get_mo_set(mo_set=mo_array(2)%mo_set, uniform_occupation=uniform_occupation) ! Giorgio
       CPASSERT(uniform_occupation)
 
@@ -682,26 +695,6 @@ CONTAINS
       sig = 1 + (1+sgn)/2 ! Polaron spin channel
       mu = 3 - sig ! The other spin channel
       iorb = k_beta + 1
-!-------------------------------------------------------------------------------! 
-      ! Dummy instructions to avoid 'Werror-unused-dummy-argument':
-!      IF (just_energy) THEN
-!            ! Nothing
-!      END IF
-      ener =0.0
-      exc= 0.0
-      total_rho = 0.0
-      exc_a = 0.0
-      exc_b = 0.0
-      ispin = 0 
-      nmo = 0
-      n =0 
-      IF (ASSOCIATED(fm_struct_tmp) .AND. &
-            ASSOCIATED(mo_derivs_local) .AND. ASSOCIATED(poisson_env) .AND.  & 
-             ASSOCIATED(matrix_v)) THEN
-            ! Notning
-      END IF
-      NULLIFY(pol_r, pol_g,my_rho_g, my_rho_r,vxc_a, vxc_b)
-!-------------------------------------------------------------------------------!
       
       ! prepare polaron density pointers
       CALL qs_rho_get(rho, pol_r=pol_r, pol_g=pol_g)
@@ -710,55 +703,123 @@ CONTAINS
       CALL pw_zero(pol_r(mu)%pw)
       CALL pw_zero(pol_g(mu)%pw)      
 
-      ! create fm matrix template based on mo_coeff with just 1 column
-      CALL get_mo_set(mo_set=mo_array(sig)%mo_set, mo_coeff=mo_coeff)
-      CALL cp_fm_struct_create(fm_struct_tmp, ncol_global=1, &
-                               template_fmstruct=mo_coeff%matrix_struct)
-      ! Create matrix_v
-      CALL cp_fm_create(matrix_v, fm_struct_tmp, name="matrix_v")
-      CALL cp_fm_struct_release(fm_struct_tmp)
+     IF(output_unit>0) WRITE(output_unit,*) ' mixing_method, use_ot', scf_env%mixing_method, scf_control%use_ot 
+      ! TODO: fix case selection to abort if pulay mixing
 
-      ! extract the proper orbital from the mo_coeff
-      ! cp_fm_to_fm_columns(msource, mtarget, ncol, source_start, target_start)   
-      CALL cp_fm_to_fm(mo_coeff, matrix_v, 1, iorb, 1) ! copy just the selected orb
-      SELECT CASE (scf_env%mixing_method)
+!      IF (.NOT. scf_control%use_ot) THEN ! Direct mixing
+!
+!            ! create fm matrix template based on mo_coeff with just 1 column
+!            CALL get_mo_set(mo_set=mo_array(sig)%mo_set, mo_coeff=mo_coeff)
+!            CALL cp_fm_struct_create(fm_struct_tmp, ncol_global=1, &
+!                                     template_fmstruct=mo_coeff%matrix_struct)
+!            ! Create matrix_v
+!            CALL cp_fm_create(matrix_v, fm_struct_tmp, name="matrix_v")
+!            CALL cp_fm_struct_release(fm_struct_tmp)
+!
+!            ! extract the proper orbital from the mo_coeff
+!            ! cp_fm_to_fm_columns(msource, mtarget, ncol, source_start, target_start)   
+!            CALL cp_fm_to_fm(mo_coeff, matrix_v, 1, iorb, 1) ! copy just the selected orb
+!
+!
+!            CALL dbcsr_set(scf_env%p_mix_new_pol(sig)%matrix, 0.0_dp)
+!            ! construct the density matrix and the corresponding density
+!            CALL cp_dbcsr_plus_fm_fm_t(scf_env%p_mix_new_pol(sig)%matrix, matrix_v=matrix_v, ncol=1, &
+!                                         alpha=1.0_dp) ! it does mat_v*mat_v^T and
+!            ! set the polaron density in the environment
+!            CALL qs_rho_set(rho, rho_pol_valid=.TRUE.)
+!
+!      ELSE IF (scf_control%use_ot) THEN ! This works with OT
 
-      CASE (direct_mixing_nr) ! Direct mixing
-            CALL dbcsr_set(scf_env%p_mix_new_pol(sig)%matrix, 0.0_dp)
-            ! construct the density matrix and the corresponding density
-            CALL cp_dbcsr_plus_fm_fm_t(scf_env%p_mix_new_pol(sig)%matrix, matrix_v=matrix_v, ncol=1, &
-                                         alpha=1.0_dp) ! it does mat_v*mat_v^T and
-            ! set the polaron density in the environment
-            CALL qs_rho_set(rho, rho_pol_valid=.TRUE.)
+      DO ispin = 1, ispin
+     IF(output_unit>0) WRITE(output_unit,*) ' ispin ', ispin
 
-      CASE (no_mixing_nr) ! This works with OT
-            CALL dbcsr_set(rho_pol(sig)%matrix, 0.0_dp)
+            matrix_ks => ks(ispin)%matrix
+            matrix_s  => s(1)%matrix
+      
+            CALL get_mo_set(mo_set=mo_array(ispin)%mo_set, &
+                            mo_coeff=mo_coeff, &
+                            eigenvalues=mo_eigenvalues, &
+                            maxocc=maxocc, &
+                            nelectron=nelectron, &
+                            n_el_f=n_el_f, &
+                            nao=nao, &
+                            nmo=nmo, &
+                            flexible_electron_count=flexible_electron_count)
+
+            ! Create temporary MO set
+            CALL cp_fm_struct_create(fm_struct_tmp, &
+                                     context=blacs_env, &
+                                     para_env=para_env, &
+                                     nrow_global=nao, &
+                                     ncol_global=nmo)
+            CALL allocate_mo_set(mo_set=mo_set_tmp, &
+                                 nao=nao, &
+                                 nmo=nmo, &
+                                 nelectron=nelectron, &
+                                 n_el_f=n_el_f, &
+                                 maxocc=maxocc, &
+                                 flexible_electron_count=flexible_electron_count)
+            CALL init_mo_set(mo_set=mo_set_tmp, &
+                             fm_struct=fm_struct_tmp, &
+                             name="Temporary MO set")
+            CALL cp_fm_struct_release(fm_struct_tmp)
+
+            mo_coeff_tmp => mo_set_tmp%mo_coeff
+
+            CALL cp_fm_init_random(mo_set_tmp%mo_coeff, nmo)
+            ! The FULL_ALL preconditioner makes not much sense for the
+            ! unoccupied orbitals
+            NULLIFY (local_preconditioner)
+            IF (ASSOCIATED(scf_env%ot_preconditioner)) THEN
+               local_preconditioner => scf_env%ot_preconditioner(1)%preconditioner
+            END IF
+
+            IF(output_unit>0) WRITE(*,*) 'pre eigensolver '
+            CALL ot_eigensolver(matrix_h=matrix_ks, &
+                                matrix_s=matrix_s, &
+                                matrix_c_fm=mo_coeff_tmp, &
+                                matrix_orthogonal_space_fm=mo_coeff, &
+                                eps_gradient=scf_control%eps_lumos, &
+                                preconditioner=local_preconditioner, &
+                                iter_max=scf_control%max_iter_lumos, &
+                                size_ortho_space=nmo)
+            IF(output_unit>0) WRITE(*,*) 'post eigensolver '
+
+
+            ! create fm matrix template based on mo_coeff with just 1 column
+            CALL cp_fm_struct_create(fm_struct_tmp, ncol_global=1, &
+                                     template_fmstruct=mo_coeff_tmp%matrix_struct)
+            ! Create matrix_v
+            CALL cp_fm_create(matrix_v, fm_struct_tmp, name="matrix_v")
+            CALL cp_fm_struct_release(fm_struct_tmp)
+
+            ! extract the proper orbital from the mo_coeff
+            ! cp_fm_to_fm_columns(msource, mtarget, ncol, source_start, target_start)   
+            CALL cp_fm_to_fm(mo_coeff, matrix_v, 1, iorb, 1) ! copy just the selected orb
+
+            ! get polaon density from the environment and set it to zero
+            CALL qs_rho_get(rho, rho_pol=rho_pol)
+            CALL dbcsr_set(rho_pol(ispin)%matrix, 0.0_dp)
             ! construct the density matrix and the corresponding density
             CALL cp_dbcsr_plus_fm_fm_t(rho_pol(sig)%matrix, matrix_v=matrix_v, ncol=1, &
                                          alpha=1.0_dp) ! it does mat_v*mat_v^T and
+
+      END DO
+!
+!
+!      ELSE
+!            CPABORT('SIC FP: mixing method NYI')
+!      END IF
+
       
             ! set the polaron density in the environment
             CALL qs_rho_set(rho,rho_pol_valid=.TRUE.)
 
-      CASE DEFAULT
-            CPABORT('SIC FP: mixing method not supported')
 
-      END SELECT
       
       ! cleanup  
       CALL cp_fm_release(matrix_v)
 
-!------------------------------------------------------------------------------------!
-
-!      ! compute polaron density
-!      CALL calculate_rho_elec(matrix_p=scf_env%p_mix_new_pol(sig)%matrix, &
-!                              rho=pol_r(sig), rho_gspace=pol_g(sig), total_rho=total_rho, &
-!                               ks_env=ks_env) ! now we have the orbital density
-!
-!      ! set the polaron density in the environment
-!      CALL qs_rho_set(rho, pol_r=pol_r, pol_g=pol_g, rho_pol=rho_pol)
-     
-!-------------------------------------------------------------------------------------!
  
       CALL timestop(handle)
    END SUBROUTINE sic_fp_get_pol_density
