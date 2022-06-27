@@ -1481,7 +1481,7 @@ CONTAINS
          WRITE (output_unit, *) " experimental feature, check code      "
          WRITE (output_unit, *) " **************************************"
       ENDIF
-      ! Giorgio
+      ! Giorgio: add molecular orbital
       ! sic_fp requires an additional orbital in the beta channel when treating
       ! hole polarons
       IF (dft_control%do_sic_fp) THEN
