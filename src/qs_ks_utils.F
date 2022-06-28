@@ -1060,14 +1060,14 @@ CONTAINS
                   ! Add to vxc
                   ! Vxc = Vxc + Vgamma
                   CALL pw_axpy(vxc_b(ispin)%pw, vxc_rho(ispin)%pw, dft_control%sic_gamma)
+                  ! Quantity useful for printing
+                  correction=-0.5*charge*dft_control%sic_gamma * &
+                                    pw_integral_ab(vxc_b(sig)%pw,pol_r(sig)%pw)
+       IF(output_unit>0) WRITE(*,*) ' correction added: ', correction
 
             ENDDO
       END IF
       
-      ! Quantity useful for printing
-                  correction=-0.5*charge*dft_control%sic_gamma * &
-                                    pw_integral_ab(vxc_b(sig)%pw,pol_r(sig)%pw)
-       IF(output_unit>0) WRITE(*,*) ' correction added: ', correction
       ! need to deallocate vxc
       IF (.NOT. just_energy) THEN
             CALL pw_pool_give_back_pw(xc_pw_pool, vxc_a(1)%pw)
