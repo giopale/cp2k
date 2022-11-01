@@ -17,7 +17,8 @@ MODULE qs_ot_scf
                                               cp_dbcsr_m_by_n_from_row_template
    USE cp_fm_types,                     ONLY: cp_fm_type
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
-                                              cp_logger_type
+                                              cp_logger_type, &
+                                              cp_logger_get_default_io_unit
    USE cp_output_handling,              ONLY: cp_print_key_finished_output,&
                                               cp_print_key_unit_nr
    USE dbcsr_api,                       ONLY: &

@@ -368,6 +368,8 @@ CONTAINS
                                 r_val=dft_control%sic_scaling_b)
       CALL section_vals_val_get(tmp_section,"GAMMA",&
                                 r_val=dft_control%sic_gamma)
+      CALL section_vals_val_get(tmp_section,"POLARON_TYPE",&
+                                i_val=dft_control%sic_poltype)
       IF (dft_control%sic_method_id == sic_fp) THEN
             dft_control%do_sic_fp = .TRUE.
             CALL section_vals_val_get(tmp_section,"DIIS_SKIP",&
@@ -1455,6 +1457,8 @@ CONTAINS
             tmpstr = "AD SIC"
          CASE (sic_eo)
             tmpstr = "Explicit Orbital SIC"
+         CASE (sic_fp)
+            tmpstr = "FP SIC"
          CASE DEFAULT
             ! fix throughout the cp2k for this option
             CPABORT("SIC option unknown")
