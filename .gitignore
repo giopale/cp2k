@@ -1,5 +1,3 @@
-Makefile
-Makefile.inc
 # base directory structure
 /exe/
 /lib/
