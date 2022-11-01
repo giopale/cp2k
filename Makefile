@@ -12,7 +12,7 @@ export CP2KHOME
 endif
 
 ARCH         := local
-export VERSION=ssmp
+export VERSION=psmp
 
 MAKEFILE     := $(CP2KHOME)/Makefile
 ARCHDIR      := $(CP2KHOME)/arch
