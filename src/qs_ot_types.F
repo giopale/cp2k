@@ -47,6 +47,9 @@ MODULE qs_ot_types
                                               section_vals_val_get
    USE kinds,                           ONLY: dp
    USE preconditioner_types,            ONLY: preconditioner_type
+   USE cp_log_handling,                 ONLY: cp_get_default_logger,&
+                                              cp_logger_type, &
+                                              cp_logger_get_default_io_unit
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE

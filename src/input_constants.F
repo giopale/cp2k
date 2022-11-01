@@ -548,6 +548,8 @@ MODULE input_constants
                                                sic_ad = 3, &
                                                sic_eo = 4, &
                                                sic_fp = 5
+   INTEGER, PARAMETER, PUBLIC               :: sic_fp_poltype_electron = 0, &
+                                               sic_fp_poltype_hole = 1
    INTEGER, PARAMETER, PUBLIC               :: sic_list_all = 1, &
                                                sic_list_unpaired = 2
    INTEGER, PARAMETER, PUBLIC               :: tddfpt_singlet = 0, &

@@ -90,7 +90,7 @@ MODULE input_cp2k_dft
         rel_zora_full, rel_zora_mp, restart_guess, rsdft_model, sccs_andreussi, &
         sccs_derivative_cd3, sccs_derivative_cd5, sccs_derivative_cd7, sccs_derivative_fft, &
         sccs_fattebert_gygi, shape_function_density, shape_function_gaussian, sic_ad, sic_eo, &
-        sic_fp, &
+        sic_fp, sic_fp_poltype_electron, sic_fp_poltype_hole, &
         sic_list_all, sic_list_unpaired, sic_mauri_spz, sic_mauri_us, sic_none, slater, &
         smear_energy_window, smear_fermi_dirac, smear_list, sparse_guess, tddfpt_davidson, &
         tddfpt_excitations, tddfpt_lanczos, tddfpt_singlet, tddfpt_spin_cons, tddfpt_spin_flip, &
@@ -6835,6 +6835,17 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
       
+      CALL keyword_create(keyword, __LOCATION__, name="POLARON_TYPE", &
+                          description="SIC FP polaron type", &
+                          usage="POLARON_TYPE ELECTRON", &
+                          default_i_val=sic_fp_poltype_electron, &
+                          enum_c_vals=s2a("ELECTRON", "HOLE"), &
+                          enum_i_vals=(/sic_fp_poltype_electron, sic_fp_poltype_hole/), &
+                          enum_desc=s2a("Select electron polaron, spin channel alpha=0", &
+                                        "Select hole polaron, spin channel alpha=1"))
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       CALL keyword_create(keyword, __LOCATION__, name="DIIS_SKIP", &
                           description="controls the activation of the DIIS method", &
                           usage="&DIIS_SKIP T", &
