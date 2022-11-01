@@ -1,4 +1,5 @@
 Makefile
+arch/*
 # base directory structure
 /exe/
 /lib/
