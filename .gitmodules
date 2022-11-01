@@ -6,3 +6,5 @@
 	path = tools/prettify/fprettify
 	url = https://github.com/pseewald/fprettify.git
 	branch = master
+[submodules "exts/dbcsr"]
+	branch = v8.2-sic-fp
